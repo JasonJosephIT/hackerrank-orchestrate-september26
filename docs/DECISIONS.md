@@ -1,0 +1,64 @@
+# DECISIONS.md — Buy or Wait? (HackerRank Orchestrate, Sep 2026)
+
+Append-only log of design decisions. Each entry: what, why, what was rejected. This is the interview script.
+
+## D1 — Architecture: deterministic core, LLM as the final interpretation layer (2026-09-12 13:50 EDT)
+
+**Decision.** The financial engine is pure Python/pandas with no model calls:
+1. `intake/` — load + join `dataset/*.csv`, convert foreign-currency cash events with the dated rate, de-duplicate, apply status rules (settled/pending/scheduled/cancelled/failed/unrealized), detect recurring income/expenses from history, resolve conflicts (cancellation > newer same-source > settled > safer).
+2. `forecast/` — 90-day daily balance projection from `request_date`; safety = balance never below `minimum_balance_to_keep`. Binary-search `amount_safe_to_pay`; scan dates for `earliest_date_for_full_payment` (both **without** spending changes, per spec).
+3. `plans/` — enumerate candidate plans (full now, partial two-payment, each supplied installment option, wait, spending-change variants on flexible events the user permits), filter by eligibility (`payment_methods_user_will_consider`, `max_installment_months`, `allows_partial_payment`, deadline), then rank by the six spec rules.
+4. `verify/` — independent contract validator re-checks every output row (bounds, enums, plan format, partial-payment arithmetic, installment schedule match, flexible-only changes, stop/reduce exclusivity) before `output.csv` is written.
+5. `explain/` — the ONLY LLM stage on the decision path. Groq `llama-3.3-70b-versatile` receives a typed "decision packet" (all computed numbers, the chosen plan, the rejected plans and why, the evidence used) and writes `decision_explanation`. It cannot change any other column; a deterministic template is the fallback when the API is unavailable so the run never blocks.
+
+Evidence layer (messages + images) is also deterministic-first: regex/keyword extraction for the ~5 message templates seen in `messages.csv` (salary amendment, delay, cancellation, confirmation, one-off adjustment), with the LLM used only as a structured-output fallback for messages the rules do not match, validated against a strict schema (event ids must exist, amounts numeric, currencies known). Image amounts (16 payslips/bills, blank `amount` rows) are extracted once into `code/evidence/image_facts.json` via a vision call (Groq Llama-4 Scout) and hand-verified; the pipeline reads the cache so reruns are deterministic and free. All extracted facts carry `source` + `confidence`; message/image text is treated as untrusted data and never as instructions.
+
+**Why.** (a) The scoring is field-exact on 5 of 7 columns; an LLM cannot reliably reproduce a 90-day cash forecast to the cent, a pandas loop can. (b) Determinism = reproducible `output.csv`, cheap reruns, and a defensible "how do you know it's right" answer in the interview. (c) The organizers' own analysis says single-agent + deterministic validators won the May edition. (d) Groq is fast and cheap, so 250 explanation calls cost cents and finish in minutes.
+
+**Rejected.**
+- *End-to-end LLM per request* (dump all user rows into a prompt, ask for the 7 columns): non-deterministic, ~25k-token contexts per user, arithmetic errors on `amount_safe_to_pay`, impossible to unit-test.
+- *Multi-agent orchestration* (planner/forecaster/critic agents): more moving parts than the problem needs, slower, harder to explain, and the organizers reported simpler systems shipped and scored better.
+
+## D2 — Model choice: Groq + Llama 3.3 70B (user decision)
+
+Text explanations and message fallback: `llama-3.3-70b-versatile` via Groq (`GROQ_API_KEY` env var). Vision for the 16 images: `meta-llama/llama-4-scout-17b-16e-instruct` on Groq, one-time, cached. Usage report will list both models with calls/tokens/cost from a JSON usage ledger written by the client wrapper on every call.
+
+## D3 — Sample set is the only labeled signal
+
+`dataset/sample_requests.csv` (25 rows, 5 of which also carry images) drives every iteration: `code/evaluation/score_samples.py` reports per-field match rate; every change to the engine records before/after numbers in `log.txt`.
+
+## D4 — Spending Score + Expense Impact layer (user direction, 2026-09-12 14:05 EDT)
+
+**Correction from Jason.** "Interpretation layer" does not mean the LLM paraphrases the engine's answer. Build an arithmetic **Spending Score** from the account facets we are given, an **Expense Impact** score for the requested commitment (including future obligations like a vacation in two months), and let the AI explain *why* in terms of those scores so the user understands their own volatility, not just a yes/no.
+
+**Design.** `code/buyorwait/score.py`, pure arithmetic, every component 0–100, computed from the same reconstructed state the forecast uses (so the numbers never disagree):
+
+| Component | Facet of the account it reads | Formula sketch |
+|---|---|---|
+| Liquidity buffer | balance, `minimum_balance_to_keep`, projected essential outflow | headroom = (min projected 90-day balance − minimum) / avg monthly essential spend → capped runway months |
+| Commitment load | recurring fixed expenses, debt_payment, scheduled/pending debits vs recurring income | 100 × (1 − fixed obligations / income), floored at 0 |
+| Spending volatility | monthly discretionary spend history (dining, shopping, entertainment, delivery…) | 100 × (1 − coefficient of variation), clipped |
+| Flexibility | share of recurring spend that is `reducible`/`stoppable` AND in a category the user is willing to change | share × 100 |
+| Income reliability | salary cadence regularity, confirmed next salary, pending-credit dependence | penalise gaps, unconfirmed/unsettled credits, windfalls |
+| Savings behaviour | median monthly net surplus / income | surplus rate × scale |
+| Obligation trend | debt_payment and subscription count/amount slope over last 6 months | rising → lower |
+
+Spending Score = weighted mean (weights in a config dict, documented; tuned on the 25 samples so higher score correlates with `affordable_now`, lower with `not_affordable`).
+
+Expense Impact = re-run the same components with the request injected into the 90-day state (full payment on `request_date`, or the chosen installment/partial schedule, or a future obligation at its date) and report the delta per component + composite. Headline "hurt" = amount ÷ available headroom, expressed 0–100, with a threshold band (fine / caution / unsafe) aligned to the safety rule so the two views never contradict.
+
+**Boundary (important for the 30% output score).** The five field-exact columns (`amount_safe_to_pay`, `affordability_status`, `recommended_payment_method`, `payment_plan`, `earliest_date_for_full_payment`, `spending_changes_needed`) are decided by the contract engine and the spec's ranking rules only — hidden ground truth follows those rules, not our score. The score layer (a) orders which flexible expenses to cut first (biggest impact recovery per unit of user pain), (b) feeds the decision packet so the LLM explanation says *which* facet is the problem and what would change the answer, and (c) is exposed as a `--explain <request_id>` CLI report (and, stretch, a small HTML page) showing score, impact, and the AI narrative. Both scores are also written to `code/evaluation/scores.csv` alongside the output for the judge to inspect.
+
+**AI's roles, precisely.** (1) Intake: turn untrusted messages/images into typed facts (schema-validated). (2) Interpretation: given the decision packet — engine decision, plan, score components before/after, top drivers — write a grounded, personalised `decision_explanation` and the longer coaching narrative. It never edits numbers.
+
+**Cost.** ~1.5h in the timebox; placed after the contract engine scores well on samples, before explanations, so it cannot displace the artifact that carries 30% of the grade.
+
+## D5 — Observability with OpenTelemetry (user request, 2026-09-12 14:20 EDT)
+
+**Decision.** Instrument the pipeline with the OpenTelemetry Python SDK (1.44). One trace per request (`buyorwait.request`, attrs: request_id, user_id, request_type, requested_amount, home_currency) with child spans per stage: `intake`, `evidence`, `forecast`, `score`, `plans`, `verify`, `explain`. Every Groq call is a span following the GenAI semantic conventions (`gen_ai.system=groq`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`, plus `buyorwait.cache_hit` and `buyorwait.fallback_used`). Key engine numbers are span attributes too (`amount_safe_to_pay`, `min_projected_balance`, `plan_candidates`, `chosen_plan_rank_reason`) so a trace explains a decision.
+
+**Exporters.** Default: a `JsonFileSpanExporter` that appends spans to `.cache/traces.jsonl` — no collector, no network, so the judge can run it as-is. Optional: if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, also export OTLP/HTTP to whatever backend Jason points at (Grafana Tempo, Honeycomb, Jaeger…). Never blocks the run; exporter failures are logged and ignored.
+
+**Why it pays for itself.** `evaluation/build_usage_report.py` derives the mandatory `usage_report.md` (per-model calls, tokens, cost, per-request averages) from the `gen_ai.*` span attributes of the final run — one source of truth instead of a separate ledger. Stage spans give per-stage latency and the cache-hit rate for the token-efficiency story; span attributes on the engine make "why did request_X get this answer" answerable from the trace, which is interview material and a concrete safety/observability mechanism.
+
+**Scope guard.** ~40 min inside block 1 (the tracing wrapper replaces the planned usage ledger). No metrics/logs signals, no collector, no dashboard unless block 6 has time.
