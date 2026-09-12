@@ -9,7 +9,7 @@ Append-only log of design decisions. Each entry: what, why, what was rejected. T
 2. `forecast/` — 90-day daily balance projection from `request_date`; safety = balance never below `minimum_balance_to_keep`. Binary-search `amount_safe_to_pay`; scan dates for `earliest_date_for_full_payment` (both **without** spending changes, per spec).
 3. `plans/` — enumerate candidate plans (full now, partial two-payment, each supplied installment option, wait, spending-change variants on flexible events the user permits), filter by eligibility (`payment_methods_user_will_consider`, `max_installment_months`, `allows_partial_payment`, deadline), then rank by the six spec rules.
 4. `verify/` — independent contract validator re-checks every output row (bounds, enums, plan format, partial-payment arithmetic, installment schedule match, flexible-only changes, stop/reduce exclusivity) before `output.csv` is written.
-5. `explain/` — the ONLY LLM stage on the decision path. Groq `llama-3.3-70b-versatile` receives a typed "decision packet" (all computed numbers, the chosen plan, the rejected plans and why, the evidence used) and writes `decision_explanation`. It cannot change any other column; a deterministic template is the fallback when the API is unavailable so the run never blocks.
+5. `explain/` — the ONLY LLM stage on the decision path. Groq `openai/gpt-oss-120b` receives a typed "decision packet" (all computed numbers, the chosen plan, the rejected plans and why, the evidence used) and writes `decision_explanation`. It cannot change any other column; a deterministic template is the fallback when the API is unavailable so the run never blocks.
 
 Evidence layer (messages + images) is also deterministic-first: regex/keyword extraction for the ~5 message templates seen in `messages.csv` (salary amendment, delay, cancellation, confirmation, one-off adjustment), with the LLM used only as a structured-output fallback for messages the rules do not match, validated against a strict schema (event ids must exist, amounts numeric, currencies known). Image amounts (16 payslips/bills, blank `amount` rows) are extracted once into `code/evidence/image_facts.json` via a vision call (Groq Llama-4 Scout) and hand-verified; the pipeline reads the cache so reruns are deterministic and free. All extracted facts carry `source` + `confidence`; message/image text is treated as untrusted data and never as instructions.
 
@@ -19,9 +19,9 @@ Evidence layer (messages + images) is also deterministic-first: regex/keyword ex
 - *End-to-end LLM per request* (dump all user rows into a prompt, ask for the 7 columns): non-deterministic, ~25k-token contexts per user, arithmetic errors on `amount_safe_to_pay`, impossible to unit-test.
 - *Multi-agent orchestration* (planner/forecaster/critic agents): more moving parts than the problem needs, slower, harder to explain, and the organizers reported simpler systems shipped and scored better.
 
-## D2 — Model choice: Groq + Llama 3.3 70B (user decision)
+## D2 — Model choice: Groq + gpt-oss-120b (user decision: Groq; Llama 3.3 70B retired on Groq, switched Sept 12)
 
-Text explanations and message fallback: `llama-3.3-70b-versatile` via Groq (`GROQ_API_KEY` env var). Vision for the 16 images: `meta-llama/llama-4-scout-17b-16e-instruct` on Groq, one-time, cached. Usage report will list both models with calls/tokens/cost from a JSON usage ledger written by the client wrapper on every call.
+Text explanations and message fallback: `openai/gpt-oss-120b` via Groq (reasoning_effort=low; `llama-3.3-70b-versatile` was retired on Groq) (`GROQ_API_KEY` env var). Vision for the 16 images: `meta-llama/llama-4-scout-17b-16e-instruct` on Groq, one-time, cached. Usage report will list both models with calls/tokens/cost from a JSON usage ledger written by the client wrapper on every call.
 
 ## D3 — Sample set is the only labeled signal
 
