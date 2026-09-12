@@ -1,0 +1,10 @@
+log.txt
+.env
+__pycache__/
+*.pyc
+.cache/
+code.zip
+.venv/
+venv/
+node_modules/
+.pytest_cache/

@@ -1,0 +1,19 @@
+{
+  "_comment": "Amounts extracted from dataset/media/images/<image_id>.png for events whose amount is blank. Extracted once with a vision model and hand-verified; the pipeline reads this cache so reruns are deterministic. Field 'field' names the figure used.",
+  "image_01": {"event_id": "event_253",   "amount": 4365000,  "currency": "IDR", "field": "Net Pay (payslip Aug-2019)", "confidence": "high"},
+  "image_02": {"event_id": "event_1442",  "amount": 100000,   "currency": "INR", "field": "Balance Due (rent receipt 11/08/23)", "confidence": "high"},
+  "image_03": {"event_id": "event_1545",  "amount": 41272,    "currency": "INR", "field": "Net Amount / Cash Paid (bill of supply 27/02/2026)", "confidence": "high"},
+  "image_04": {"event_id": "event_1700",  "amount": 2854,     "currency": "INR", "field": "Item Bill (delivery order; image cropped below item bill)", "confidence": "medium"},
+  "image_05": {"event_id": "event_1786",  "amount": 704.05,   "currency": "INR", "field": "Amount due till 06-Feb-2026 (telecom bill)", "confidence": "high"},
+  "image_06": {"event_id": "event_3051",  "amount": 1995,     "currency": "INR", "field": "Total (grocery tax invoice)", "confidence": "high"},
+  "image_07": {"event_id": "event_3231",  "amount": 8528,     "currency": "INR", "field": "Grand Total (restaurant tax invoice 29-10-2025)", "confidence": "high"},
+  "image_08": {"event_id": "event_4535",  "amount": 15339,    "currency": "INR", "field": "Total Amount Received (maintenance receipt 24-07-2026)", "confidence": "high"},
+  "image_09": {"event_id": "event_5170",  "amount": 723,      "currency": "INR", "field": "Total Amount Received (water bill receipt 07-06-2026)", "confidence": "high"},
+  "image_10": {"event_id": "event_6033",  "amount": 79679.26, "currency": "INR", "field": "Total / Balance Due (grocery tax invoice)", "confidence": "high"},
+  "image_11": {"event_id": "event_6859",  "amount": 3650,     "currency": "INR", "field": "Amount Payable / Balance (hospital provisional bill 19-Jan-2023)", "confidence": "high"},
+  "image_12": {"event_id": "event_7307",  "amount": 33.50,    "currency": "USD", "field": "Total (taxi receipt 01/10/2025)", "confidence": "high"},
+  "image_13": {"event_id": "event_7941",  "amount": 2298,     "currency": "INR", "field": "Total paid (tote bag order)", "confidence": "high"},
+  "image_14": {"event_id": "event_9421",  "amount": 4543,     "currency": "INR", "field": "TOTAL (handwritten pharmacy bill; items sum 1500+724+796+550+303+670)", "confidence": "high"},
+  "image_15": {"event_id": "event_9806",  "amount": 9968,     "currency": "INR", "field": "Grand Total incl. taxes (airline invoice 07-Jun-2026)", "confidence": "high"},
+  "image_16": {"event_id": "event_10521", "amount": 393.22,   "currency": "INR", "field": "Total (EV charging invoice 03/09/2026)", "confidence": "high"}
+}
