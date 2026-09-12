@@ -2,7 +2,7 @@
 
 An affordability agent for the **Buy or Wait?** challenge. For each row in `dataset/requests.csv` it decides whether the user should pay in full, pay partially, use a supplied installment option, wait, or not proceed, and writes `output.csv`.
 
-Design in one line: a **deterministic financial engine** (pandas, no model calls) reconstructs the user's cash position, forecasts it, enumerates and ranks plans and verifies the output contract; an **LLM** (Groq, gpt-oss-120b) only writes `decision_explanation` from a typed decision packet, with a template fallback so the run never blocks. Full rationale in [`docs/DECISIONS.md`](docs/DECISIONS.md) (D1–D6) and the timebox in [`docs/PLAN.md`](docs/PLAN.md).
+Design in one line: a **deterministic financial engine** (pandas, no model calls) reconstructs the user's cash position, forecasts it, enumerates and ranks plans and verifies the output contract; an **LLM** (Groq, `openai/gpt-oss-120b`) only writes `decision_explanation` from a typed decision packet, with a template fallback so the run never blocks. Full rationale in [`docs/DECISIONS.md`](docs/DECISIONS.md) (D1–D6) and the timebox in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Setup
 
@@ -24,6 +24,7 @@ python3 code/buyorwait/verify.py output.csv       # standalone contract validato
 python3 code/evaluation/build_usage_report.py     # evaluation/usage_report.md from the run's OpenTelemetry spans
 python3 code/main.py --explain request_42         # decision packet + Spending Score / Expense Impact for one request
 python3 -m pytest -q tests                        # unit + regression tests
+python3 code/package.py                           # build code.zip for submission (no dataset, secrets or caches)
 ```
 
 `main.py` refuses to write `output.csv` if the verifier finds a contract violation.
@@ -37,7 +38,7 @@ dataset/*.csv ──► intake.py    join, dated FX, status rules, recurrence + 
               ──► plans.py     full / partial / installments / wait / spending-change variants, eligibility, 6-rule ranking
               ──► score.py     Spending Score (7 arithmetic components) + Expense Impact delta
               ──► verify.py    independent contract validator (bounds, enums, plan formats, option match, flexible-only changes)
-              ──► explain.py   Groq openai/gpt-oss-120b writes decision_explanation from the decision packet (template fallback)
+              ──► explain.py   Groq openai/gpt-oss-120b writes decision_explanation from the decision packet (template fallback, 429 backoff)
               ──► telemetry.py OpenTelemetry: one trace per request, stage spans, gen_ai.* attributes -> .cache/traces.jsonl
 ```
 

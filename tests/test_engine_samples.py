@@ -29,6 +29,11 @@ def test_samples_regression():
         rows.append(out)
         for k in FLOOR:
             hits[k] += out[k] == truth[req.request_id][k]
+    within5 = 0
+    for out in rows:
+        t = float(truth[out["request_id"]]["amount_safe_to_pay"])
+        within5 += abs(float(out["amount_safe_to_pay"]) - t) <= 0.05 * max(t, 1)
+    assert within5 >= 15, f"amount_safe_to_pay within 5%: {within5} < 15"
     assert verify_rows(rows, load_context(ROOT / "dataset", "sample_requests.csv")) == []
     for k, floor in FLOOR.items():
         assert hits[k] >= floor, f"{k}: {hits[k]} < {floor}"
