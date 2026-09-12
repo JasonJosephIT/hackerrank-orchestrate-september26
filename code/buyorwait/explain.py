@@ -133,6 +133,8 @@ def grounded(text: str, packet: dict) -> bool:
       tell the user to pay today, installments/partial mention their schedule
     """
     low = text.lower()
+    if any(tok in text for tok in ("{", "}", '"request_id"', "payment_plan", "amount_safe_to_pay")) or len(text.split()) > 90:
+        return False   # echoed packet, field names or a wall of text
     nums = _numbers_in(text)
 
     def has(x: float) -> bool:
