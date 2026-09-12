@@ -12,7 +12,7 @@ def _state(balance=1000.0, minimum=200.0, recurring=None, fixed=None):
 
 
 def _rec(amount, cadence, next_date, direction="debit", eid="event_1"):
-    return Recurrence(key="k", category="c", event_type="expense", direction=direction, amount=amount, cadence_days=cadence,
+    return Recurrence(key=f"{eid}/{direction}", category="c", event_type="expense", direction=direction, amount=amount, cadence_days=cadence,
                       next_date=next_date, last_event_id=eid, flexibility="fixed", minimum_allowed_amount=None, occurrences=3)
 
 
@@ -47,3 +47,21 @@ def test_earliest_date_scans_forward():
     assert earliest_full_payment_date(st, 500) == date(2026, 1, 15)
     assert earliest_full_payment_date(st, 50) == date(2026, 1, 1)
     assert earliest_full_payment_date(st, 10_000) is None
+
+
+def test_periodic_debit_is_charged_before_same_day_credit_but_monthly_is_netted(monkeypatch):
+    import buyorwait.forecast as F
+    monkeypatch.setattr(F, "INTRADAY_CHECK", "periodic")
+    payday = date(2026, 1, 15)
+    salary = _rec(1000, 0, payday, "credit", "event_2")
+    # a weekly item landing on the payday: 300 - 150 = 150 < 200 before the salary arrives -> unsafe
+    weekly = _state(balance=300, minimum=200, recurring=[_rec(150, 7, payday), salary])
+    assert not is_safe(weekly, [])
+    assert projection(weekly)[(payday - date(2026, 1, 1)).days] == (payday, 1150, 150)
+    # the same amount as a calendar-monthly item is netted against the salary -> safe
+    monthly = _state(balance=300, minimum=200, recurring=[_rec(150, 0, payday), salary])
+    assert is_safe(monthly, [])
+    assert projection(monthly)[(payday - date(2026, 1, 1)).days] == (payday, 1150, 1150)
+    # the plan payment on a payday is still charged last, after the salary
+    assert is_safe(monthly, [(payday, 900)])
+    assert not is_safe(weekly, [(payday, 900)])

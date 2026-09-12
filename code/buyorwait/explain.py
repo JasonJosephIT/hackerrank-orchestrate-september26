@@ -13,8 +13,9 @@ from datetime import date
 from .formatting import fmt_amount
 from .plans import Decision
 
-# Groq retired llama-3.3-70b-versatile in Sept 2026; gpt-oss-120b is the strongest text model on the free tier.
-MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "openai/gpt-oss-120b")
+# POC model (D9): SDAIA's allam-2-7b on Groq, a small non-reasoning model. openai/gpt-oss-120b (D7) stays selectable
+# through BUYORWAIT_EXPLAIN_MODEL and keeps its reasoning_effort handling below.
+MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "allam-2-7b")
 MAX_RETRIES = int(os.environ.get("BUYORWAIT_LLM_RETRIES", "8"))
 
 
