@@ -15,7 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing, checked Sept 2026
-    "llama-3.3-70b-versatile": (0.59, 0.79),
+    "openai/gpt-oss-120b": (0.15, 0.75),
+    "llama-3.3-70b-versatile": (0.59, 0.79),  # retired on Groq (404 model_not_found) Sept 2026; kept for old traces
     "meta-llama/llama-4-scout-17b-16e-instruct": (0.11, 0.34),
 }
 PROVIDER = {"groq": "Groq"}
@@ -63,7 +64,7 @@ def main(path: Path) -> int:
               f"- Model calls per request: {tot['calls'] / n_req:.2f}",
               f"- Average tokens per request: {total_tokens / n_req:,.1f} (input {tot['input'] / n_req:,.1f}, output {tot['output'] / n_req:,.1f})",
               f"- Estimated total cost: USD {tot['cost']:.4f} · per request: USD {tot['cost'] / n_req:.6f}", "",
-              "Prices: Groq list prices per 1M tokens — llama-3.3-70b-versatile $0.59 in / $0.79 out; "
+              "Prices: Groq list prices per 1M tokens — openai/gpt-oss-120b $0.15 in / $0.75 out; llama-3.3-70b-versatile $0.59 in / $0.79 out (retired); "
               "llama-4-scout-17b-16e-instruct $0.11 in / $0.34 out. The 16 image amounts were extracted once into "
               "`code/evidence/image_facts.json` (vision pass, hand-verified) and are read from that cache during the run, "
               "so they add no per-run tokens.", ""]

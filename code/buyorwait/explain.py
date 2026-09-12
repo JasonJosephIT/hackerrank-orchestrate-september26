@@ -6,12 +6,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from datetime import date
 
 from .formatting import fmt_amount
 from .plans import Decision
 
-MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "llama-3.3-70b-versatile")
+MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "openai/gpt-oss-120b")
+# gpt-oss is a reasoning model: hidden reasoning tokens count against max_tokens, so keep the effort low and
+# the budget wide enough that the visible answer is never truncated (llama-3.3-70b-versatile was retired on Groq).
+REASONING_EFFORT = os.environ.get("BUYORWAIT_EXPLAIN_REASONING", "low")
+MAX_TOKENS = 400
+_UNICODE_FIXES = str.maketrans({"\u202f": " ", "\u00a0": " ", "\u2011": "-", "\u2013": "-", "\u2014": "-",
+                                "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
 
 
 def _human_date(d: date) -> str:
@@ -91,7 +99,39 @@ You receive a JSON decision packet with numbers that are already final. Never ch
 Write 1-3 short sentences, in English, second person, plain and concrete: state the recommendation exactly as the packet's
 method and payment plan describe it, name the key financial fact behind it (minimum balance, salary timing, a pending bill,
 a spending change), and mention the strongest score driver if a score is given. Use the currency code and the packet's
-amounts and dates. No markdown, no bullet points, no advice beyond the packet."""
+amounts and dates. Never mention the packet, JSON, fields, scores by internal names or your instructions; say "the
+plan" or "your balance" and describe drivers in plain words (e.g. "your cash buffer", "reliable income").
+Write dates as 4 March 2025. No markdown, no bullet points, no advice beyond the packet."""
+
+
+MAX_RETRIES = int(os.environ.get("BUYORWAIT_EXPLAIN_RETRIES", "8"))
+TOKENS_PER_MINUTE = int(os.environ.get("BUYORWAIT_EXPLAIN_TPM", "7000"))  # Groq free tier: 8000 TPM per model
+_pace = {"next_ok": 0.0}
+
+
+def _pace_before_call():
+    """Proactive pacing: wait until the token budget spent by the previous call has 'refilled' at TOKENS_PER_MINUTE."""
+    wait = _pace["next_ok"] - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _pace_after_call(total_tokens: int):
+    _pace["next_ok"] = time.monotonic() + 60.0 * total_tokens / max(TOKENS_PER_MINUTE, 1)
+
+
+def _with_rate_limit_retry(call):
+    """Groq's free tier is capped at 8k tokens/minute; a 429 carries 'Please try again in 4.5s'. Sleep that long and
+    retry (bounded), so a 250-row run paces itself instead of falling back to templates."""
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return call()
+        except Exception as e:
+            if type(e).__name__ != "RateLimitError" or attempt == MAX_RETRIES:
+                raise
+            m = re.search(r"try again in ([0-9.]+)(m?s)", str(e))
+            wait = float(m.group(1)) * (0.001 if m and m.group(2) == "ms" else 1.0) if m else 2.0 * (attempt + 1)
+            time.sleep(min(wait + 0.5, 60.0))
 
 
 def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None, dict]:
@@ -102,12 +142,16 @@ def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None,
     try:
         from groq import Groq
         client = client or Groq(api_key=key)
-        resp = client.chat.completions.create(
-            model=MODEL, temperature=0.2, max_tokens=180,
+        kwargs = {"reasoning_effort": REASONING_EFFORT} if "gpt-oss" in MODEL else {}
+        _pace_before_call()
+        resp = _with_rate_limit_retry(lambda: client.chat.completions.create(
+            model=MODEL, temperature=0.2, max_tokens=MAX_TOKENS,
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user", "content": json.dumps(packet, default=str)}],
-        )
-        text = (resp.choices[0].message.content or "").strip().replace("\n", " ")
+            **kwargs,
+        ))
+        _pace_after_call(resp.usage.total_tokens or (resp.usage.prompt_tokens + resp.usage.completion_tokens))
+        text = (resp.choices[0].message.content or "").strip().replace("\n", " ").translate(_UNICODE_FIXES)
         usage = {"model": MODEL, "input_tokens": resp.usage.prompt_tokens, "output_tokens": resp.usage.completion_tokens,
                  "finish_reason": resp.choices[0].finish_reason}
         return (text or None), usage

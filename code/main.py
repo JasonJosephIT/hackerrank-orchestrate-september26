@@ -124,17 +124,23 @@ def main() -> int:
         from groq import Groq
         client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
-    out_rows, packets = [], []
+    out_rows, packets, fallbacks, last_error = [], [], 0, None
     for i, row in enumerate(rows_in.itertuples(index=False), 1):
         dec, out, packet, usage = run_one(ds, facts, row, use_llm, tracer, client)
         out_rows.append(out)
         packets.append(packet)
+        if use_llm and usage.get("error"):
+            fallbacks, last_error = fallbacks + 1, usage["error"]
         if args.explain:
             print(json.dumps(packet, indent=2, default=str))
             print(json.dumps(out, indent=2))
             return 0
         if i % 25 == 0:
             print(f"  {i}/{len(rows_in)}", file=sys.stderr)
+
+    if use_llm and fallbacks:
+        print(f"WARNING: {fallbacks}/{len(rows_in)} explanations fell back to the template; last error: {last_error}",
+              file=sys.stderr)
 
     ctx = load_context(DATASET, "sample_requests.csv" if args.samples else "requests.csv")
     errs = verify_rows(out_rows, ctx)
