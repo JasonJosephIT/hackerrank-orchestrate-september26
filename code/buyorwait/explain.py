@@ -58,9 +58,16 @@ def _compact_score(score: dict | None) -> dict | None:
     ss, ei = score.get("spending_score", {}), score.get("expense_impact", {})
     comps = {k: v for k, v in ss.items() if not k.startswith("_") and k != "composite"}
     weakest = sorted(comps.items(), key=lambda kv: kv[1])[:2]
-    return {"spending_score": ss.get("composite"), "score_after_request": ei.get("composite_after"),
-            "hurt_0_100": ei.get("hurt"), "band": ei.get("band"), "weakest_components": dict(weakest),
-            "top_impact_drivers": ei.get("top_drivers")}
+    out = {"spending_score": ss.get("composite"), "score_after_request": ei.get("composite_after"),
+           "hurt_0_100": ei.get("hurt"), "band": ei.get("band"), "weakest_components": dict(weakest),
+           "top_impact_drivers": ei.get("top_drivers")}
+    absorbed = ss.get("_absorbed") or []
+    if absorbed:   # long-standing habits already reflected in the balance (docs/ABSORPTION.md)
+        out["established_habits_already_in_balance"] = [a["stream"] for a in absorbed[:2]]
+    unproven = [d for d in (ss.get("_income_detail") or []) if d["increase"] > 0 and d["trust"] < 0.9]
+    if unproven:
+        out["income_increase_not_yet_proven"] = [d["stream"] for d in unproven[:2]]
+    return out
 
 
 def template_explanation(dec: Decision) -> str:
