@@ -1,6 +1,6 @@
 # Token Usage and Cost Analysis
 
-Final full-dataset run: 2026-09-12 18:52 UTC · 250 requests processed · source: `.cache/traces.jsonl` (OpenTelemetry spans, `gen_ai.*` attributes).
+Run recorded in `traces.jsonl`: 2026-09-12 19:01 UTC · 250 requests processed (OpenTelemetry spans, `gen_ai.*` attributes). `python3 code/main.py` writes this file only on a full run; `--samples`, `--explain` and `--limit` use separate trace files.
 
 The deterministic engine (intake, forecast, plans, verification) makes no model calls. The LLM writes `decision_explanation` only; a template fallback is used when a call fails, so fallbacks are listed too.
 
@@ -15,4 +15,4 @@ The deterministic engine (intake, forecast, plans, verification) makes no model 
 - Average tokens per request: 0.0 (input 0.0, output 0.0)
 - Estimated total cost: USD 0.0000 · per request: USD 0.000000
 
-Prices: Groq list prices per 1M tokens — llama-3.3-70b-versatile $0.59 in / $0.79 out; llama-4-scout-17b-16e-instruct $0.11 in / $0.34 out. The 16 image amounts were extracted once into `code/evidence/image_facts.json` (vision pass, hand-verified) and are read from that cache during the run, so they add no per-run tokens.
+Prices: Groq list prices per 1M tokens — llama-3.3-70b-versatile $0.59 in / $0.79 out; meta-llama/llama-4-scout-17b-16e-instruct $0.11 in / $0.34 out. The 16 image amounts were extracted once into `code/evidence/image_facts.json` (vision pass, hand-verified) and are read from that cache during the run, so they add no per-run tokens.

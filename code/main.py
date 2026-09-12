@@ -117,7 +117,9 @@ def main() -> int:
     use_llm = not args.no_llm and bool(os.environ.get("GROQ_API_KEY"))
     if not use_llm and not args.no_llm:
         print("GROQ_API_KEY not set: using template explanations", file=sys.stderr)
-    tracer = telemetry.get_tracer(ROOT / ".cache" / "traces.jsonl")
+    # only a full run overwrites the trace file the usage report is built from
+    mode = "explain" if args.explain else ("samples" if args.samples else ("partial" if args.limit else "full"))
+    tracer = telemetry.get_tracer(ROOT / ".cache" / ("traces.jsonl" if mode == "full" else f"traces_{mode}.jsonl"))
 
     client = None
     if use_llm:
@@ -132,6 +134,7 @@ def main() -> int:
         if args.explain:
             print(json.dumps(packet, indent=2, default=str))
             print(json.dumps(out, indent=2))
+            tracer.flush()
             return 0
         if i % 25 == 0:
             print(f"  {i}/{len(rows_in)}", file=sys.stderr)

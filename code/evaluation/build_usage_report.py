@@ -19,6 +19,7 @@ PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing, checked
     "meta-llama/llama-4-scout-17b-16e-instruct": (0.11, 0.34),
 }
 PROVIDER = {"groq": "Groq"}
+PRICE_NOTE = "; ".join(f"{m} ${pi:.2f} in / ${po:.2f} out" for m, (pi, po) in PRICES.items())
 
 
 def main(path: Path) -> int:
@@ -30,17 +31,19 @@ def main(path: Path) -> int:
         if "gen_ai.request.model" not in a:
             continue
         m = per_model[a["gen_ai.request.model"]]
-        m["provider"] = PROVIDER.get(a.get("gen_ai.system", ""), a.get("gen_ai.system", "?"))
+        m["provider"] = PROVIDER.get(a.get("gen_ai.system"), a.get("gen_ai.system") or "?")
+        inp, outp = int(a.get("gen_ai.usage.input_tokens") or 0), int(a.get("gen_ai.usage.output_tokens") or 0)
         if a.get("buyorwait.fallback_used"):
-            m["fallbacks"] += 1
-            continue
-        m["calls"] += 1
-        m["input"] += int(a.get("gen_ai.usage.input_tokens") or 0)
-        m["output"] += int(a.get("gen_ai.usage.output_tokens") or 0)
+            m["fallbacks"] += 1          # template used; any tokens a failed/empty call consumed are still billed
+        if inp or outp or not a.get("buyorwait.fallback_used"):
+            m["calls"] += 1
+        m["input"] += inp
+        m["output"] += outp
     n_req = len(requests) or 1
     lines = ["# Token Usage and Cost Analysis", "",
-             f"Final full-dataset run: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · "
-             f"{len(requests)} requests processed · source: `.cache/traces.jsonl` (OpenTelemetry spans, `gen_ai.*` attributes).", "",
+             f"Run recorded in `{path.name}`: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · "
+             f"{len(requests)} requests processed (OpenTelemetry spans, `gen_ai.*` attributes). "
+             f"`python3 code/main.py` writes this file only on a full run; `--samples`, `--explain` and `--limit` use separate trace files.", "",
              "The deterministic engine (intake, forecast, plans, verification) makes no model calls. The LLM writes "
              "`decision_explanation` only; a template fallback is used when a call fails, so fallbacks are listed too.", "",
              "| Provider | Model | Calls | Input tokens | Output tokens | Total tokens | Est. cost (USD) | Fallbacks |",
@@ -63,8 +66,7 @@ def main(path: Path) -> int:
               f"- Model calls per request: {tot['calls'] / n_req:.2f}",
               f"- Average tokens per request: {total_tokens / n_req:,.1f} (input {tot['input'] / n_req:,.1f}, output {tot['output'] / n_req:,.1f})",
               f"- Estimated total cost: USD {tot['cost']:.4f} · per request: USD {tot['cost'] / n_req:.6f}", "",
-              "Prices: Groq list prices per 1M tokens — llama-3.3-70b-versatile $0.59 in / $0.79 out; "
-              "llama-4-scout-17b-16e-instruct $0.11 in / $0.34 out. The 16 image amounts were extracted once into "
+              f"Prices: Groq list prices per 1M tokens — {PRICE_NOTE}. The 16 image amounts were extracted once into "
               "`code/evidence/image_facts.json` (vision pass, hand-verified) and are read from that cache during the run, "
               "so they add no per-run tokens.", ""]
     out = ROOT / "code" / "evaluation" / "usage_report.md"

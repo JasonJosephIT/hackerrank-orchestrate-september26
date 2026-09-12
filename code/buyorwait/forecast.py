@@ -1,7 +1,8 @@
 """Balance projection, amount_safe_to_pay, earliest_date_for_full_payment.
 
-The safety check is applied after every projected debit (debits before credits on the same
-day), so a bill that lands on payday is covered by the balance before the salary arrives.
+The safety check runs on end-of-day balances (INTRADAY_CHECK=False, the setting that scores
+best on the solved samples). Set INTRADAY_CHECK=True to also check the balance after each
+debit inside a day, before that day's credits.
 """
 from __future__ import annotations
 

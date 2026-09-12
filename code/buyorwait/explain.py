@@ -52,7 +52,7 @@ def template_explanation(dec: Decision) -> str:
     amt = _money(req.amount, cur)
     mn = _money(st.minimum, cur)
     if dec.status == "affordable_now":
-        return f"Pay {amt} today. This keeps the {mn} minimum available over the next 90 days."
+        return f"Pay {amt} today. This keeps the {mn} minimum available over the next 12 weeks."
     if dec.method == "wait":
         return f"Pay {amt} in full on {_human_date(p.first_date)}. Paying earlier would take the balance below the {mn} minimum."
     if dec.method == "partial_payment":
@@ -70,7 +70,7 @@ def template_explanation(dec: Decision) -> str:
         return f"{_changes_phrase(p, cur)}, then pay {amt} today. This leaves at least {mn} available."
     if dec.safe_today > 0 and dec.earliest is None:
         return (f"Do not proceed with the {amt} request. Although {_money(dec.safe_today, cur)} is available today, "
-                f"the full amount cannot be completed safely within 90 days.")
+                f"the full amount cannot be completed safely within the 12-week forecast.")
     return f"Do not make this payment by {_human_date(req.deadline)}. None of the available options keeps the {mn} minimum protected."
 
 
