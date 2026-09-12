@@ -21,7 +21,7 @@ def _clip(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
 
 def components(state: FinancialState, extra=None, exclude=None, overrides=None) -> dict:
     proj = projection(state, extra=extra, exclude=exclude, overrides=overrides)
-    trough = min(b for _, b in proj)
+    trough = min(low for _, _, low in proj)
     income_m = state.monthly_income()
     outflow_m = state.monthly_outflow()
     fixed_m = state.monthly_outflow(only_fixed=True)

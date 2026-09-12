@@ -83,7 +83,7 @@ def run_one(ds, facts, row, use_llm: bool, tracer, client=None):
             extra = [(d, -a, "plan") for d, a in dec.plan.payments]
             exclude = {c.event_id for c in dec.plan.changes if c.kind == "stop"}
             overrides = {c.event_id: c.new_amount for c in dec.plan.changes if c.kind == "reduce_to"}
-            min_proj = round(min(b for _, b in projection(state, extra=extra, exclude=exclude, overrides=overrides)), 2)
+            min_proj = round(min(low for _, _, low in projection(state, extra=extra, exclude=exclude, overrides=overrides)), 2)
         packet = decision_packet(dec, min_proj, {"spending_score": score, "expense_impact": impact})
         explanation, usage = None, {}
         if use_llm:

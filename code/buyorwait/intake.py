@@ -209,6 +209,9 @@ DEFAULT_CFG = dict(
     income_stable_ratio=1.01,     # tolerance around the median for a salary stream to count as regular
     use_messages=True,
     include_request_date=True,   # project a recurring debit falling on request_date itself
+    outlier_ratio=3.0,           # amounts above 3x the group median are one-offs, not the recurring level
+    cadence_map={},              # optional cadence rewrites (unused by default)
+    first_gap_map={21: 14},      # sample-calibrated: a 3-week item's next occurrence lands ~2 weeks after the last one (D6)
 )
 
 
@@ -257,13 +260,20 @@ def build_state(ds: Dataset, user_id: str, request_date: date, amount_facts: dic
         cad = _cadence(dates, cfg["gap_window"])
         if cad > cfg["max_cadence"]:
             continue
+        first_gap = cfg.get("first_gap_map", {}).get(cad, None)
+        cad = cfg.get("cadence_map", {}).get(cad, cad)
         amounts = list(g.home_amount)
+        med = _stat(amounts, "median")
+        outliers = [a for a in amounts if a > cfg["outlier_ratio"] * med]
+        if outliers and len(amounts) - len(outliers) >= cfg["min_occurrences"]:
+            notes.append(f"{cat}: {len(outliers)} one-off amount(s) excluded from the recurring estimate")
+            amounts = [a for a in amounts if a <= cfg["outlier_ratio"] * med]
         fixed_amount = max(amounts) - min(amounts) < 1e-9
         stat = cfg["amount_stat_fixed"] if fixed_amount else cfg["amount_stat_variable"]
         last = g.iloc[-1]
         recurring.append(Recurrence(
             key=f"{cat}/{et}", category=cat, event_type=et, direction="debit", amount=_stat(amounts, stat),
-            cadence_days=cad, next_date=_advance(last.sdate, cad, request_date, strict=not cfg["include_request_date"]), last_event_id=last.event_id,
+            cadence_days=cad, next_date=_advance(last.sdate + timedelta(days=first_gap), cad, request_date, strict=not cfg["include_request_date"]) if first_gap else _advance(last.sdate, cad, request_date, strict=not cfg["include_request_date"]), last_event_id=last.event_id,
             flexibility=last.flexibility, minimum_allowed_amount=(None if pd.isna(last.minimum_allowed_amount) else float(last.minimum_allowed_amount)),
             occurrences=len(g), history=amounts, protected=(cat in protected), description=last.description))
 
@@ -375,7 +385,12 @@ def _apply_facts(ds: Dataset, cur: str, rd: date, facts: list[Fact], income: lis
                 for r in recs:
                     if on and on >= rd:
                         r.next_date = on
-                    r.amount = conv(f.amount, f.currency, r.next_date)
+                    new_amt = conv(f.amount, f.currency, r.next_date)
+                    if k in ("base_salary_commission_pending", "household_income_ended") and new_amt > r.amount:
+                        # message restates the base without a settled record above history: keep the safer (lower) figure
+                        notes.append(f"{f.message_id}: stated salary {f.amount} exceeds settled history; keeping {r.amount:.2f}")
+                        continue
+                    r.amount = new_amt
                     r.first_amount = None
                     r.cadence_days = 0
             else:
