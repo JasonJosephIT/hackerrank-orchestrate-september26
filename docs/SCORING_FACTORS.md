@@ -99,3 +99,21 @@ Adding a *future* obligation (a trip in two months) is the same injection with a
 2. `main.py`: write both factors and the bands into `code/evaluation/scores.csv` (one row per request) and into the decision packet's compact score (composite S, composite T, band, weakest component of each).
 3. Tests: invariant 4, a synthetic user with a `final payroll` row (T2 must drop), a user with no debt (S6 = T3 = 100).
 4. `--explain` CLI prints the two factor tables.
+
+## 7. Research grounding and test runs (2026-09-12)
+
+**Where the thresholds come from.** Debt service (S6) is scaled on the lender convention that a debt-to-income ratio at or below 36% is healthy and above 43% is too high (we map 0% → 100 and 30% → 0 so the 36–43% band already scores near zero). Savings behaviour (T5) uses the 10–15% recommended savings rate as its mid-point and 30% as the ceiling. The liquidity checks reuse the emergency-fund convention of 3–6 months of essentials (the forecast's minimum-balance rule already covers the first 12 weeks). Outflow and income regularity (S1, T1) follow the JPMorgan Chase Institute's method of measuring volatility as the coefficient of variation of monthly totals; their median household sees a 36% month-to-month income change and 89% of households see at least a 5% change, so real data would need the wider scale — this dataset's households are far steadier (median monthly-outflow CV around 4%), which is why the CV scales are set tight (CV 0.20 for outflow, 0.10 for individual streams → 0).
+
+**Implementation.** `code/buyorwait/factors.py` (vectorised pandas: one groupby pass per component, no per-user loop; 275 users in 2.2 s including currency conversion), `code/evaluation/run_factors.py` (writes `code/evaluation/factors.csv` and prints the checks), `tests/test_factors.py` (range, weights, no-debt, employment-ended, multiplier bounds).
+
+**Test-run results.**
+
+| Check | Result |
+|---|---|
+| Distribution | Spending Factor p10/median/p90 = 62.5 / 68.8 / 74.6 (111 steady, 164 mixed). Stability Factor 73.4 / 84.5 / 97.1 (260 dependable, 15 watch). Components with real spread: S1, S2, S3, S5, T1, T2, T5. Components that sit at the ceiling for most users because the synthetic data is clean: S6 (63% at 100), S7 (83%), T3 (92%), T4 (68%) — valid but low-information here. |
+| Ordering vs. sample status | The factors do **not** predict `affordability_status` (Spearman 0.02 for Stability, −0.25 for Spending), while the engine's own driver, headroom ÷ requested amount, scores 0.57. This is the expected and desired result: the factors describe the person, the decision depends on the request size. They belong in the explanation and the Expense Impact delta, never in the contract columns (D4 boundary confirmed). |
+| Message ablation | Removing messages changes T2 for exactly 115 users, all of whom have a message. |
+| Invariants | All components in [0, 100]; users without debt score 100 on S6 and T3; the 8 employment-ended users score ≤ 45 on T2. |
+| Lowest stability users | New-job users with no settled income yet (T1 = 0, T5 = 0) whose only support is the confirmed first-salary message (T2 = 80): the factor correctly says "dependable on paper, unproven in history". |
+
+**Usability verdict.** Both factors are computable from the given files with no external data; S1–S5, T1, T2 and T5 carry signal on this dataset, S6/S7/T3/T4 are structurally sound but rarely move here. Next step when the pipeline session is free: write the two composites, bands and weakest components into the decision packet (replacing the compact score) and add `factors.csv` to `code.zip`.
