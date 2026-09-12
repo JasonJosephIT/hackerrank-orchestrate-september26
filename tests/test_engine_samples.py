@@ -13,8 +13,8 @@ from buyorwait.intake import Dataset, build_state  # noqa: E402
 from buyorwait.plans import decide, request_from_row  # noqa: E402
 from buyorwait.verify import COLUMNS, load_context, verify_rows  # noqa: E402
 
-FLOOR = {"affordability_status": 23, "recommended_payment_method": 24, "payment_plan": 23,
-         "earliest_date_for_full_payment": 23, "spending_changes_needed": 22}
+FLOOR = {"affordability_status": 25, "recommended_payment_method": 25, "payment_plan": 24,
+         "earliest_date_for_full_payment": 24, "spending_changes_needed": 23}
 
 
 def test_samples_regression():
@@ -33,7 +33,7 @@ def test_samples_regression():
     for out in rows:
         t = float(truth[out["request_id"]]["amount_safe_to_pay"])
         within5 += abs(float(out["amount_safe_to_pay"]) - t) <= 0.05 * max(t, 1)
-    assert within5 >= 15, f"amount_safe_to_pay within 5%: {within5} < 15"
+    assert within5 >= 18, f"amount_safe_to_pay within 5%: {within5} < 18"
     assert verify_rows(rows, load_context(ROOT / "dataset", "sample_requests.csv")) == []
     for k, floor in FLOOR.items():
         assert hits[k] >= floor, f"{k}: {hits[k]} < {floor}"
