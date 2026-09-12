@@ -4,7 +4,7 @@ request_02,17252946.03,affordable_with_plan,installments,2025-08-08:15952906.67|
 request_03,880695.93,affordable_later,wait,2019-11-15:5491000,2019-11-15,none,"Pay IDR 5,491,000 in full on 15 November 2019. Paying earlier would take the balance below the IDR 2,668,700 minimum."
 request_04,9109811.59,affordable_later,wait,2024-06-15:12693000,2024-06-15,none,"Pay IDR 12,693,000 in full on 15 June 2024. Paying earlier would take the balance below the IDR 30,686,600 minimum."
 request_05,1168.79,not_affordable,not_recommended,none,,none,"Do not proceed with the ZAR 15,488 request. Although ZAR 1,168.79 is available today, the full amount cannot be completed safely within the 12-week forecast."
-request_06,523.84,affordable_later,wait,2026-02-15:620.40,2026-02-15,none,Pay EUR 620.40 in full on 15 February 2026. Paying earlier would take the balance below the EUR 800.00 minimum.
+request_06,604.76,affordable_with_plan,full_payment,2026-01-03:620.40,2026-01-15,stop:event_476,"Stop the family streaming plan, then pay EUR 620.40 today. This leaves at least EUR 800.00 available."
 request_07,86237.21,affordable_with_plan,installments,2024-09-12:68432|2024-10-10:68432|2024-11-07:68432,2024-10-23,none,"Use 3 installments of INR 68,432, starting 12 September 2024. This leaves at least INR 93,000 available."
 request_08,285.2,affordable_later,wait,2025-04-15:996.60,2025-04-15,none,Pay EUR 996.60 in full on 15 April 2025. Paying earlier would take the balance below the EUR 800.00 minimum.
 request_09,166.61,affordable_now,full_payment,2026-07-04:166.61,2026-07-04,none,Pay EUR 166.61 today. This keeps the EUR 600.00 minimum available over the next 12 weeks.

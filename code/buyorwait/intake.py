@@ -215,6 +215,7 @@ DEFAULT_CFG = dict(
     include_request_date=True,   # project a recurring debit falling on request_date itself
     outlier_ratio=3.0,           # amounts above 3x the group median are one-offs, not the recurring level
     first_gap_map={21: 14},      # sample-calibrated: a 3-week item's next occurrence lands ~2 weeks after the last one (D6)
+    skip_subweekly_due_today=True,  # sample-calibrated (D11): a sub-weekly stream whose next occurrence is request_date is not projected
 )
 
 
@@ -281,6 +282,12 @@ def build_state(ds: Dataset, user_id: str, request_date: date, amount_facts: dic
             next_date = last.sdate + timedelta(days=first_gap)
         else:
             next_date = _advance(last.sdate, cad, request_date, strict=strict)
+        # Sample-calibrated (D11): a sub-weekly item (cadence < 7 days) that would land on request_date itself is
+        # day-to-day spending the reference does not carry forward as a commitment (sample 06); a sub-weekly item
+        # whose next occurrence is still ahead is projected as usual (samples 24, 25).
+        if cfg["skip_subweekly_due_today"] and 0 < cad < 7 and next_date == request_date:
+            notes.append(f"{cat}: {cad}-day stream due on the request date not projected")
+            continue
         recurring.append(Recurrence(
             key=f"{cat}/{et}", category=cat, event_type=et, direction="debit", amount=_stat(amounts, stat),
             cadence_days=cad, next_date=next_date, last_event_id=last.event_id,

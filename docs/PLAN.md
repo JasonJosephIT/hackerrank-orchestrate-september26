@@ -25,7 +25,7 @@
 
 ## Architecture (see docs/DECISIONS.md D1–D3)
 
-Deterministic pipeline → Spending Score + Expense Impact (D4) → typed decision packet → Groq Llama 3.3 writes `decision_explanation` and the coaching narrative in terms of the score drivers (template fallback). Contract columns are never touched by the LLM or the score. Evidence layer is regex-first with LLM structured-output fallback; image amounts extracted once via Groq Llama-4 Scout into a hand-verified JSON cache. Independent verifier gates `output.csv`. Sample scorer is the iteration signal.
+Deterministic pipeline → Spending Score + Expense Impact (D4) → typed decision packet → Groq gpt-oss-120b writes `decision_explanation` and the coaching narrative in terms of the score drivers (template fallback). Contract columns are never touched by the LLM or the score. Evidence layer is regex-first with LLM structured-output fallback; image amounts extracted once via Groq Llama-4 Scout into a hand-verified JSON cache. Independent verifier gates `output.csv`. Sample scorer is the iteration signal.
 
 ```
 code/

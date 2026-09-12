@@ -2,7 +2,7 @@
 
 An affordability agent for the **Buy or Wait?** challenge. For each row in `dataset/requests.csv` it decides whether the user should pay in full, pay partially, use a supplied installment option, wait, or not proceed, and writes `output.csv`.
 
-Design in one line: a **deterministic financial engine** (pandas, no model calls) reconstructs the user's cash position, forecasts it, enumerates and ranks plans and verifies the output contract; an **LLM** (Groq, `openai/gpt-oss-120b`) only writes `decision_explanation` from a typed decision packet, with a template fallback so the run never blocks. Full rationale in [`docs/DECISIONS.md`](docs/DECISIONS.md) (D1–D6) and the timebox in [`docs/PLAN.md`](docs/PLAN.md).
+Design in one line: a **deterministic financial engine** (pandas, no model calls) reconstructs the user's cash position, forecasts it, enumerates and ranks plans and verifies the output contract; an **LLM** (Groq, `openai/gpt-oss-120b`; `BUYORWAIT_EXPLAIN_MODEL` overrides) only writes `decision_explanation` from a typed decision packet, with a template fallback so the run never blocks. Full rationale in [`docs/DECISIONS.md`](docs/DECISIONS.md) (D1–D6) and the timebox in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Setup
 
@@ -38,7 +38,7 @@ dataset/*.csv ──► intake.py    join, dated FX, status rules, recurrence + 
               ──► plans.py     full / partial / installments / wait / spending-change variants, eligibility, 6-rule ranking
               ──► score.py     Spending Score (7 arithmetic components) + Expense Impact delta
               ──► verify.py    independent contract validator (bounds, enums, plan formats, option match, flexible-only changes)
-              ──► explain.py   Groq openai/gpt-oss-120b writes decision_explanation from the decision packet (template fallback, 429 backoff)
+              ──► explain.py   Groq openai/gpt-oss-120b (BUYORWAIT_EXPLAIN_MODEL overrides) writes decision_explanation from the decision packet (template fallback, 429 backoff)
               ──► telemetry.py OpenTelemetry: one trace per request, stage spans, gen_ai.* attributes -> .cache/traces.jsonl
 ```
 
