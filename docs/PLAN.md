@@ -58,7 +58,7 @@ docs/PLAN.md, docs/DECISIONS.md
 | 3 | Plan generation ✅ | 19:00–22:15 | eligibility, installment matching, partial rule, wait, spending changes (stop/reduce, ≤3, flexible + permitted only), 6-rule ranking | status + method match ≥18/25; plan strings exact on installments/partial/wait |
 | 3b | Spending Score + Expense Impact ✅ (v1) | 22:15–23:45 | `score.py`: 7 arithmetic components → composite; impact delta by injecting the request/obligation into the 90-day state; threshold bands aligned with the safety rule; `scores.csv` | Score separates affordable_now from not_affordable on the 25 samples (rank correlation reported); impact bands never contradict engine status |
 | 4 | Evidence layer ✅ | 23:45–01:15 | message regex catalogue (multilingual), LLM fallback with schema + injection guard, image cache; apply amendments to forecast | 16 blank amounts resolved; the 5 sample-user images match sample outcomes; reruns identical |
-| 5 | Explanations + full run ◐ (template run done; Groq run must be local) | 01:15–02:45 | `explain.py` prompt from decision packet, 250-row run, ledger → usage report | root `output.csv` validated; `usage_report.md` has real numbers |
+| 5 | Explanations + full run ✅ (gpt-oss-120b, D7) | 01:15–02:45 | `explain.py` prompt from decision packet, 250-row run, ledger → usage report | root `output.csv` validated; `usage_report.md` has real numbers |
 | 6 | Error analysis / stretch (or sleep) | 02:45–05:15 | per-sample diff → fix largest error class → re-score; every change logged with before/after | Score trend recorded in log.txt; no regressions |
 | 7 | Packaging | 05:15–07:00 | README (setup/run), `code.zip` (exclude dataset/, venv, caches), final run, `log.txt` check, upload all three | Submission confirmed on HackerRank |
 | 8 | Interview prep + buffer | 07:00–08:30 | DECISIONS.md → talking points; `/hackathon-judge-prep` mock | Can explain architecture, trade-offs, safety, evidence in 5 min |
@@ -72,7 +72,7 @@ Rules: a block overrunning by 25% is cut to its exit criterion. Every block ends
 - [x] Block 3 — plans + ranking + spending changes; status 24/25, method 24/25, plan 23/25
 - [x] Block 3b — score.py (7 components, impact delta, `--explain` CLI)
 - [x] Block 4 — evidence.py (30 templates EN/ID) + image_facts.json (16/16)
-- [ ] Block 5 — Groq explanations + real usage report (blocked in the sandbox: api.groq.com denied; run locally)
+- [x] Block 5 — Groq explanations (openai/gpt-oss-120b, D7) on all 25 samples; full 250-row run + usage report in progress
 - [ ] Block 6 — error analysis on the residual amount error
 - [ ] Block 7 — packaging: code.zip, final output.csv, log.txt upload
 - [ ] Block 8 — interview prep

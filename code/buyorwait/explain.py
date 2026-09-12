@@ -6,12 +6,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from datetime import date
 
 from .formatting import fmt_amount
 from .plans import Decision
 
-MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "llama-3.3-70b-versatile")
+# Groq retired llama-3.3-70b-versatile in Sept 2026; gpt-oss-120b is the strongest text model on the free tier.
+MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "openai/gpt-oss-120b")
+MAX_RETRIES = int(os.environ.get("BUYORWAIT_LLM_RETRIES", "8"))
 
 
 def _human_date(d: date) -> str:
@@ -39,11 +43,23 @@ def decision_packet(dec: Decision, min_projected: float | None = None, score: di
         "spending_changes": [dict(kind=c.kind, event=c.event_id, description=c.description, category=c.category,
                                   new_amount=c.new_amount, saving_per_occurrence=c.saving) for c in (p.changes if p else [])],
         "rejected_plans": [dict(method=q.method, option_id=q.option_id, total=q.total_paid, changes=len(q.changes),
-                                completes_by_deadline=q.last_date <= req.deadline) for q in dec.candidates[1:6]],
+                                completes_by_deadline=q.last_date <= req.deadline) for q in dec.candidates[1:4]],
         "min_projected_balance_after_plan": min_projected,
-        "evidence": st.notes[:6],
-        "score": score,
+        "evidence": st.notes[:4],
+        "score": _compact_score(score),
     }
+
+
+def _compact_score(score: dict | None) -> dict | None:
+    """Keep the prompt small: composite before/after, hurt band and the two weakest components."""
+    if not score:
+        return None
+    ss, ei = score.get("spending_score", {}), score.get("expense_impact", {})
+    comps = {k: v for k, v in ss.items() if not k.startswith("_") and k != "composite"}
+    weakest = sorted(comps.items(), key=lambda kv: kv[1])[:2]
+    return {"spending_score": ss.get("composite"), "score_after_request": ei.get("composite_after"),
+            "hurt_0_100": ei.get("hurt"), "band": ei.get("band"), "weakest_components": dict(weakest),
+            "top_impact_drivers": ei.get("top_drivers")}
 
 
 def template_explanation(dec: Decision) -> str:
@@ -86,12 +102,15 @@ def _changes_phrase(p, cur: str) -> str:
     return s[0].upper() + s[1:]
 
 
-SYSTEM_PROMPT = """You write the decision_explanation field for a personal-finance affordability engine.
-You receive a JSON decision packet with numbers that are already final. Never change, recompute or contradict them.
-Write 1-3 short sentences, in English, second person, plain and concrete: state the recommendation exactly as the packet's
-method and payment plan describe it, name the key financial fact behind it (minimum balance, salary timing, a pending bill,
-a spending change), and mention the strongest score driver if a score is given. Use the currency code and the packet's
-amounts and dates. No markdown, no bullet points, no advice beyond the packet."""
+SYSTEM_PROMPT = """You write the decision_explanation for a personal-finance affordability engine, addressed to the user.
+You receive JSON with numbers that are already final. Never change, recompute, or contradict them, and never mention the JSON,
+"the packet", fields, or the engine. Write 1-3 plain sentences (at most 60 words) that:
+1. state the recommendation exactly as method and payment_plan say (pay in full today / pay X today and Y on DATE /
+   N installments of X starting DATE / wait until DATE / do not proceed), including any spending change (stop or reduce the named expense);
+2. give the key financial fact behind it (minimum balance kept, salary timing, a pending bill, the shortfall);
+3. optionally name the weakest score component in plain words (e.g. "liquidity buffer", "commitment load").
+Money: currency code then the amount with thousands separators and two decimals only when the amount has cents (EUR 620.40, INR 197,400).
+Dates as "15 June 2024". No markdown, no bullet points, no extra advice."""
 
 
 def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None, dict]:
@@ -100,16 +119,39 @@ def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None,
     if not key:
         return None, {"error": "no GROQ_API_KEY"}
     try:
-        from groq import Groq
-        client = client or Groq(api_key=key)
-        resp = client.chat.completions.create(
-            model=MODEL, temperature=0.2, max_tokens=180,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user", "content": json.dumps(packet, default=str)}],
-        )
-        text = (resp.choices[0].message.content or "").strip().replace("\n", " ")
-        usage = {"model": MODEL, "input_tokens": resp.usage.prompt_tokens, "output_tokens": resp.usage.completion_tokens,
-                 "finish_reason": resp.choices[0].finish_reason}
-        return (text or None), usage
-    except Exception as e:  # network, auth, rate limit: never block the run
+        from groq import Groq, RateLimitError
+        client = client or Groq(api_key=key, max_retries=0)
+    except Exception as e:  # pragma: no cover
         return None, {"error": f"{type(e).__name__}: {e}", "model": MODEL}
+    kwargs = dict(model=MODEL, temperature=0.2, max_tokens=400,
+                  messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": json.dumps(packet, default=str)}])
+    if "gpt-oss" in MODEL:
+        kwargs["reasoning_effort"] = "low"    # hidden reasoning tokens count against the per-minute budget
+    usage: dict = {"model": MODEL, "input_tokens": 0, "output_tokens": 0}
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = client.chat.completions.create(**kwargs)
+        except RateLimitError as e:  # free tier: 8k tokens/minute; wait for the window the API asks for
+            m = re.search(r"try again in ([\d.]+)s", str(e))
+            wait = min(60.0, float(m.group(1)) + 0.5) if m else 6.0 * (attempt + 1)
+            usage["rate_limit_waits"] = usage.get("rate_limit_waits", 0) + 1
+            if attempt == MAX_RETRIES:
+                usage["error"] = f"RateLimitError after {MAX_RETRIES} retries"
+                return None, usage
+            time.sleep(wait)
+            continue
+        except Exception as e:  # network, auth: never block the run
+            usage["error"] = f"{type(e).__name__}: {e}"
+            return None, usage
+        usage["input_tokens"] += resp.usage.prompt_tokens
+        usage["output_tokens"] += resp.usage.completion_tokens
+        usage["finish_reason"] = resp.choices[0].finish_reason
+        text = (resp.choices[0].message.content or "").strip().replace("\n", " ")
+        if text:
+            return text, usage
+        if attempt == MAX_RETRIES:
+            break
+        kwargs["max_tokens"] = min(1200, kwargs["max_tokens"] * 2)   # empty content: the budget went to reasoning
+    usage["error"] = "empty completion"
+    return None, usage

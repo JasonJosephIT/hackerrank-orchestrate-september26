@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing, checked Sept 2026
+PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing (console.groq.com), checked 2026-09-12
+    "openai/gpt-oss-120b": (0.15, 0.60),
+    "openai/gpt-oss-20b": (0.10, 0.50),
     "llama-3.3-70b-versatile": (0.59, 0.79),
     "meta-llama/llama-4-scout-17b-16e-instruct": (0.11, 0.34),
 }

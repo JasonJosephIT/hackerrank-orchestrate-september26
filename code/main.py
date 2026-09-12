@@ -119,7 +119,8 @@ def main() -> int:
         print("GROQ_API_KEY not set: using template explanations", file=sys.stderr)
     # only a full run overwrites the trace file the usage report is built from
     mode = "explain" if args.explain else ("samples" if args.samples else ("partial" if args.limit else "full"))
-    tracer = telemetry.get_tracer(ROOT / ".cache" / ("traces.jsonl" if mode == "full" else f"traces_{mode}.jsonl"))
+    tracer_path = ROOT / ".cache" / ("traces.jsonl" if mode == "full" else f"traces_{mode}.jsonl")
+    tracer = telemetry.get_tracer(tracer_path)
 
     client = None
     if use_llm:
@@ -154,7 +155,7 @@ def main() -> int:
         for p in packets:
             f.write(json.dumps(p, default=str) + "\n")
     tracer.flush()
-    print(f"wrote {target} ({len(out_rows)} rows), verified OK; traces -> .cache/traces.jsonl")
+    print(f"wrote {target} ({len(out_rows)} rows), verified OK; traces -> {tracer_path.relative_to(ROOT)}")
     return 0
 
 
