@@ -33,3 +33,16 @@ def test_embedded_instructions_are_ignored():
 def test_image_cache_covers_all_blank_amounts():
     amounts = image_amounts()
     assert len(amounts) == 16 and amounts["event_253"] == 4365000
+
+
+def test_subweekly_stream_due_on_request_date_is_not_projected():
+    """D11: sample 06's 5-day transport stream falls on the request date and is skipped; a flag restores it."""
+    from datetime import date
+    from buyorwait.intake import Dataset, build_state
+    from buyorwait.evidence import image_amounts
+    ds = Dataset.load()
+    on = build_state(ds, "user_06", date(2026, 1, 3), image_amounts(), request_id="request_06")
+    off = build_state(ds, "user_06", date(2026, 1, 3), image_amounts(), cfg={"skip_subweekly_due_today": False}, request_id="request_06")
+    assert not [r for r in on.recurring if r.key == "transport/expense"]
+    tr = [r for r in off.recurring if r.key == "transport/expense"]
+    assert tr and tr[0].cadence_days == 5 and tr[0].next_date == date(2026, 1, 3)
