@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing (console.groq.com), checked 2026-09-12
+    "allam-2-7b": (0.0, 0.0),           # POC model (D9): no public list price found on 2026-09-12; reported at 0 until confirmed
     "openai/gpt-oss-120b": (0.15, 0.60),
     "openai/gpt-oss-20b": (0.10, 0.50),
     "llama-3.3-70b-versatile": (0.59, 0.79),

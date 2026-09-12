@@ -141,6 +141,10 @@ class FinancialState:
     facts: list[Fact]
     events: pd.DataFrame
 
+    @property
+    def recurrence_by_key(self) -> dict[str, "Recurrence"]:
+        return {r.key: r for r in self.recurring}
+
     def flows(self, start: date, end: date, exclude: set[str] | None = None,
               overrides: dict[str, float] | None = None) -> list[tuple[date, float, str]]:
         exclude, overrides = exclude or set(), overrides or {}

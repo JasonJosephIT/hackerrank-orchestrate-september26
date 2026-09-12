@@ -13,9 +13,9 @@ from datetime import date
 from .formatting import fmt_amount
 from .plans import Decision
 
-# Groq retired llama-3.3-70b-versatile in Sept 2026. POC default: allam-2-7b (fast, no rate-limit pressure);
-# openai/gpt-oss-120b is the higher-quality alternative (BUYORWAIT_EXPLAIN_MODEL=openai/gpt-oss-120b).
-MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "allam-2-7b")
+# Groq retired llama-3.3-70b-versatile in Sept 2026. Default: openai/gpt-oss-120b (D7); allam-2-7b was a short POC (D9)
+# and is selectable via BUYORWAIT_EXPLAIN_MODEL.
+MODEL = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "openai/gpt-oss-120b")
 MAX_RETRIES = int(os.environ.get("BUYORWAIT_LLM_RETRIES", "8"))
 
 

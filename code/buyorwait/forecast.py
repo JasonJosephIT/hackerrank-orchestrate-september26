@@ -1,8 +1,9 @@
 """Balance projection, amount_safe_to_pay, earliest_date_for_full_payment.
 
-The safety check runs on end-of-day balances (INTRADAY_CHECK=False, the setting that scores
-best on the solved samples). Set INTRADAY_CHECK=True to also check the balance after each
-debit inside a day, before that day's credits.
+The safety check runs on end-of-day balances plus, for INTRADAY_CHECK="periodic" (the default,
+calibrated on the solved samples), the balance after that day's n-day-cadence debits (weekly,
+fortnightly, ...) before its credits. INTRADAY_CHECK=True checks the balance after every debit
+before the credits; False checks end-of-day balances only.
 """
 from __future__ import annotations
 
@@ -14,9 +15,15 @@ from .intake import FinancialState
 # reconciles when the window closes before day 87 (sample 13's earliest date, samples 05/10's
 # troughs), so the engine projects 84 days (12 weeks). See docs/DECISIONS.md D6.
 HORIZON_DAYS = 84
-# When True the safety check also looks at the balance after each debit inside a day (before
-# that day's credits). The samples score slightly better on end-of-day balances, so it is off.
-INTRADAY_CHECK = False
+# Same-day ordering of a debit against a credit landing on the same day (payday collisions):
+#   False      -> end-of-day balances only (every debit is netted against the credit)
+#   True       -> every debit is charged before the credit (balance checked after each debit)
+#   "periodic" -> only n-day-cadence debits (weekly/fortnightly/... variable spending) are charged
+#                 before the credit; calendar-monthly debits, pending and scheduled rows are netted
+# On the solved samples a weekly/fortnightly item projected onto the payday reconciles only when it is
+# charged before the salary (samples 13, 18), while a monthly item on the payday reconciles only when it
+# is netted (samples 02, 06, 15, 19, 22, 23). See docs/DECISIONS.md D6.
+INTRADAY_CHECK: bool | str = "periodic"
 
 
 def projection(state: FinancialState, extra: list[tuple[date, float, str]] | None = None,
@@ -24,19 +31,31 @@ def projection(state: FinancialState, extra: list[tuple[date, float, str]] | Non
                horizon: int = HORIZON_DAYS) -> list[tuple[date, float, float]]:
     """Per day: (date, end-of-day balance, lowest balance reached during the day)."""
     start, end = state.request_date, state.request_date + timedelta(days=horizon)
-    # ordering within a day: recurring/pending debits (0) -> credits (1) -> plan payments (2)
-    flows = [(d, a, l, 0 if a < 0 else 1) for d, a, l in state.flows(start, end, exclude=exclude, overrides=overrides)]
+    # ordering within a day: n-day-cadence debits (0) -> other debits (1) -> credits (2) -> plan payments (3);
+    # the intra-day low is taken after the debits the mode charges before the credits
+    checked = {0, 1} if INTRADAY_CHECK is True else ({0} if INTRADAY_CHECK == "periodic" else set())
+    by_key = state.recurrence_by_key
+
+    def order(a: float, label: str) -> int:
+        if a >= 0:
+            return 2
+        rec = by_key.get(label)
+        return 0 if rec is not None and rec.cadence_days > 0 else 1
+
+    flows = [(d, a, l, order(a, l)) for d, a, l in state.flows(start, end, exclude=exclude, overrides=overrides)]
     if extra:
-        flows = sorted(flows + [(d, a, l, 2) for d, a, l in extra], key=lambda t: (t[0], t[3]))
+        flows += [(d, a, l, 3) for d, a, l in extra]
+    flows.sort(key=lambda t: (t[0], t[3]))
     bal, out, i = state.balance, [], 0
     d = start
     while d <= end:
-        low = bal
+        low = float("inf")
         while i < len(flows) and flows[i][0] <= d:
             bal += flows[i][1]
-            low = min(low, bal)
+            if flows[i][3] in checked:
+                low = min(low, bal)
             i += 1
-        out.append((d, bal, low if INTRADAY_CHECK else bal))
+        out.append((d, bal, min(low, bal)))
         d += timedelta(days=1)
     return out
 
