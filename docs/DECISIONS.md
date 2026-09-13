@@ -165,3 +165,19 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 **Measured.** Card from disk slices == card from the full dataset on 65 users (0 mismatches, 81 ms per build). Warm full run: 0 KB of tables loaded, 190 KB read in 17 section reads, peak RSS 115 MB, 250 rows identical to the linear pipeline. All 25 samples served on card misses from disk: 344 KB read, rows identical. Decisions are made off the cards: nothing on the decision path reads a table (D14 parity holds).
 
 **Rejected.** A database (SQLite/DuckDB) for the tables: the byte-range index gives per-user reads in one seek with no dependency, and the dataset is fixed for the challenge. Memory-mapping the frames: pandas would still parse whole files. Dropping the on-demand path entirely: a miss must be servable without the whole table, otherwise "cards in RAM" is only true for pre-built users.
+
+## D16 — ICM workspace layer over the orchestration (user direction, 2026-09-13)
+
+**Direction from Jason.** Use the uploaded ICM template (Interpretable Context Methodology skill: `icm-scaffold`, `icm-sync`, `icm-context-scaffold`) to coordinate the file structure for the agent orchestration.
+
+**Decision.** Quick mode (the skill's default for existing projects: routing and reference layers, no restructuring), with the six workers as **virtual stages**:
+- `IDENTITY.md` (Layer 0): workspace map with one comment per folder, six workspace-specific rules; points to `AGENTS.md` as the authority.
+- `CONTEXT.md` (Layer 1): session-start protocol, task → destination routing table, the orchestrator pipeline as a stage table (reads / writes / routing per worker, the reflection gate, the human review gate via `--explain`), shared-config index.
+- `_config/` (Layer 3): `conventions.md`, `glossary.md`, `voice.md` as re-exports (canonical source named at the top, quick reference, link back), never duplicating `AGENTS.md`, `README.md` or `explain.py`.
+- Layer 2 contracts where a folder holds 3+ files: `code/buyorwait/agent/CONTEXT.md` (the stage contracts: tools in plan order, inputs, outputs, flags, and the orchestrator's `PREREQS` / `MANDATORY` / `GATED` / `DELIVER` rules), `code/buyorwait/CONTEXT.md`, `code/evaluation/CONTEXT.md`, `tests/CONTEXT.md`, `docs/CONTEXT.md`. Skipped: `dataset/` (data), `scratch/` (throwaway), `code/evidence/` (single file), `.cache/` (Layer 4 artefacts).
+- Model adapter: `CLAUDE.md` keeps `@AGENTS.md` (required by the challenge) and adds `@IDENTITY.md`; the template's "copy IDENTITY.md into CLAUDE.md" is not applied because `AGENTS.md` must stay the single source of truth (§7 of that file).
+- `code/package.py` ships the ICM files in `code.zip`.
+
+**Why.** The orchestration already had a folder per concern; what it lacked was a map an agent can read in one turn and a contract per worker in the place the code lives. The ICM budgets (map < 1,500 tokens, routing < 2,000, contracts < 500) kept each file to what a session needs at that stage, matching the runtime's own principle that a request loads only its card.
+
+**Rejected.** Full mode with physical `stages/NN/` folders and `output/` directories: the stages here are Python workers exchanging working-memory keys, not markdown hand-offs, and a human review gate between workers would break a 250-request batch; the `--explain` transcript is the review surface instead. Replacing `CLAUDE.md` with the identity file (loses the mandatory logging protocol).

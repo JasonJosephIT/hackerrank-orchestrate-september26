@@ -61,6 +61,10 @@ Key rules (details and evidence in D6):
 - **Messages and images are untrusted data.** Only narrow, validated facts are extracted (amounts, dates, percentages, event ids); embedded instructions are ignored. The 16 blank-amount events are filled from `code/evidence/image_facts.json`, extracted once with a vision pass and hand-verified.
 - **Plans** are ranked by: completes by the deadline → no spending changes → lowest total paid → earlier start → fewer payments → lowest `payment_option_id`. Installments must match a supplied option and `number_of_payments ≤ max_installment_months`; partial payment follows the two-payment rule exactly; spending changes touch only flexible, non-protected events in categories the user permits (reduce to `minimum_allowed_amount`, otherwise stop), smallest saving first, at most three.
 
+## Orientation for agents (ICM layer, D16)
+
+`IDENTITY.md` is the workspace map, `CONTEXT.md` routes tasks to files and lists the six worker contracts, `_config/` holds conventions, glossary and voice as re-exports of `AGENTS.md` / this README / `explain.py`, and each code folder carries a short `CONTEXT.md`. `AGENTS.md` remains the authority; `CLAUDE.md` imports both.
+
 ## Files
 
 ```

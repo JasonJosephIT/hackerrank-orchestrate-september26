@@ -11,7 +11,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-INCLUDE = ["code", "tests", "docs", "README.md", "requirements.txt", ".env.example", "problem_statement.md", "AGENTS.md", "CLAUDE.md", ".gitignore"]
+INCLUDE = ["code", "tests", "docs", "_config", "README.md", "requirements.txt", ".env.example", "problem_statement.md", "AGENTS.md", "CLAUDE.md",
+           "IDENTITY.md", "CONTEXT.md", ".gitignore"]
 EXCLUDE_PARTS = {"__pycache__", ".pytest_cache", ".cache", ".venv", "venv", "node_modules", ".git"}
 EXCLUDE_NAMES = {".env", "log.txt", "code.zip", "packets.jsonl", "sample_packets.jsonl"}
 
