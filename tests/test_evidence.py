@@ -59,3 +59,30 @@ def test_explanation_guard_rejects_ungrounded_text():
     nr = {"method": "not_recommended", "payment_plan": [], "requested_amount": 15488, "request_date": "2025-11-06", "spending_changes": []}
     assert grounded("Do not proceed with the ZAR 15,488 request.", nr)
     assert not grounded("Pay the full amount of ZAR 15,488 today.", nr)
+
+
+def test_conservative_mode_only_makes_irregular_users_safer():
+    # D13: flag off -> no reserve, variable pool at the mean; flag on -> lower-quantile pool and a reserve,
+    # and never a larger safe amount. Regular-salary users are untouched either way.
+    from datetime import date
+    from buyorwait.intake import Dataset, build_state
+    from buyorwait.evidence import image_amounts
+    from buyorwait.forecast import amount_safe_today
+    ds = Dataset.load()
+    facts = image_amounts()
+    on_cfg = {"conservative_income": True}
+    for rid in ("request_09", "request_12", "request_01"):
+        row = ds.samples[ds.samples.request_id == rid].iloc[0]
+        rd = date.fromisoformat(row.request_date)
+        off = build_state(ds, row.user_id, rd, facts, request_id=rid)
+        on = build_state(ds, row.user_id, rd, facts, cfg=on_cfg, request_id=rid)
+        assert off.reserve == 0 and off.floor == off.minimum
+        pool_off = [r for r in off.recurring if r.description == "variable income"]
+        pool_on = [r for r in on.recurring if r.description == "variable income"]
+        if off.irregular_income:
+            assert on.reserve > 0
+            if pool_on and pool_off:   # a message may have removed the pool (user_12); the reserve still holds
+                assert pool_on[0].amount <= pool_off[0].amount
+        else:
+            assert on.reserve == 0 and not pool_on and on.irregular_income is False
+        assert amount_safe_today(on, 1e12) <= amount_safe_today(off, 1e12) + 1e-9

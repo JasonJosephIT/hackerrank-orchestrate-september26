@@ -22,6 +22,7 @@ ABSORPTION = True
 TAU = 3.0            # months of history at which a stream is 63% "established" (1 - e^-1)
 LAMBDA = 0.6         # an established expense keeps a 40% floor weight: the cash still leaves
 MESSAGE_SEED = 0.25  # trust given to an income increase confirmed only by a message / scheduled row
+PROFILE_POINTS = 5.0  # D14: income_reliability points per account-profile adjustment step (adjustment is -2..2, so ±10 max)
 
 
 def established(r) -> float:
@@ -87,7 +88,7 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
     fixed_m += sum(-a for _, a, _ in (extra or []) if a < 0) * 30.0 / horizon_days
     absorbed = sorted(((established(r), r) for r in fixed_recs if established(r) >= 0.5), key=lambda t: -t[0])
     essential_m = sum(r.amount * (30.0 / (r.cadence_days or 30)) for r in state.recurring if r.direction == "debit" and r.protected) or outflow_m
-    headroom = trough - state.minimum
+    headroom = trough - state.floor   # floor = minimum + conservative reserve (D13); equals minimum unless the flag is on
     runway_months = headroom / essential_m if essential_m > 0 else 3.0
     liquidity = _clip(runway_months / 3.0 * 100)                       # 3 months of essentials = 100
     commitment = _clip(100 * (1 - fixed_m / trusted_m)) if trusted_m > 0 else 0.0
@@ -116,6 +117,9 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
         reliability = 100.0 if stable else 60.0
         if any("pending" in n or "not forecast" in n for n in state.notes):
             reliability -= 20
+    if state.profile and state.profile.get("adjustment"):
+        # D14: the account-profile supplement, ±2 steps of PROFILE_POINTS, on top of the arithmetic
+        reliability += PROFILE_POINTS * max(-2, min(2, int(state.profile["adjustment"])))
     reliability = _clip(reliability)
     savings = _clip(100 * (trusted_m - outflow_m) / trusted_m) if trusted_m > 0 else 0.0
     return {"liquidity_buffer": round(liquidity, 1), "commitment_load": round(commitment, 1),
@@ -124,7 +128,8 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
             "_trough": round(trough, 2), "_headroom": round(headroom, 2), "_monthly_income": round(income_m, 2),
             "_trusted_income": round(trusted_m, 2), "_monthly_outflow": round(outflow_m, 2),
             "_absorbed": [{"stream": r.description or r.key, "established": round(e, 2)} for e, r in absorbed[:3]],
-            "_income_detail": income_detail}
+            "_income_detail": income_detail,
+            "_profile": {k: state.profile.get(k) for k in ("archetype", "adjustment", "rationale", "source")} if state.profile else None}
 
 
 def composite(c: dict) -> float:
@@ -150,7 +155,7 @@ def expense_impact(state: FinancialState, dec) -> dict:
     delta = {k: round(after[k] - before[k], 1) for k in WEIGHTS}
     headroom = max(before["_headroom"], 1e-9)
     hurt = _clip(100 * dec.request.amount / headroom) if before["_headroom"] > 0 else 100.0
-    band = "fine" if after["_trough"] >= state.minimum and hurt < 50 else ("caution" if after["_trough"] >= state.minimum else "unsafe")
+    band = "fine" if after["_trough"] >= state.floor and hurt < 50 else ("caution" if after["_trough"] >= state.floor else "unsafe")
     drivers = sorted(delta.items(), key=lambda kv: kv[1])[:2]
     return {"composite_before": composite(before), "composite_after": composite(after), "delta": delta,
             "hurt": round(hurt, 1), "band": band, "top_drivers": [k for k, _ in drivers],

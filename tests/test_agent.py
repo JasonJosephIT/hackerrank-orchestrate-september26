@@ -1,4 +1,4 @@
-"""Agentic runtime (D13): tool catalogue, planner validation, orchestrator parity with the linear pipeline,
+"""Agentic runtime (D15): tool catalogue, planner validation, orchestrator parity with the linear pipeline,
 reflection re-planning on an audit failure. No network: explanations use the template."""
 import importlib.util
 from pathlib import Path
@@ -109,7 +109,7 @@ def test_rule_planner_conditions_on_request(lt):
     assert {s.worker for s in steps} == set(WORKERS)
 
 
-# ---- D14: account cards and the score gate ---------------------------------------------------
+# ---- D16: account cards and the score gate ---------------------------------------------------
 def test_cards_round_trip_and_serve_without_dataset(lt, tmp_path):
     from buyorwait.agent.cards import CardStore
     rows = list(lt.ds.samples.itertuples(index=False))
@@ -146,7 +146,7 @@ def test_score_gate_is_exact_against_full_plan_search(lt):
     assert gated > 0
 
 
-# ---- D15: cards in RAM, tables on disk by section --------------------------------------------
+# ---- D17: cards in RAM, tables on disk by section --------------------------------------------
 def test_disk_slices_match_full_dataset_and_serve_card_misses(lt, tmp_path):
     from buyorwait.agent.cards import CardStore, build_card
     from buyorwait.agent.store import DiskTables
@@ -183,7 +183,7 @@ def test_fetch_events_reads_one_user_section_from_disk(lt, tmp_path):
     assert mem.ledger[-1].tool == "fetch_events"
 
 
-# ---- D17: reflection telemetry and run-level reflection -------------------------------------
+# ---- D19: reflection telemetry and run-level reflection -------------------------------------
 def test_reflect_span_and_run_reflection_report(lt, tmp_path, monkeypatch):
     """Every iteration emits an agent.reflect span with the checks; the run-level reflection reads spans + transcripts."""
     from buyorwait import telemetry

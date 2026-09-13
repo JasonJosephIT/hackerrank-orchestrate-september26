@@ -1,6 +1,6 @@
 # Run Reflection
 
-Generated 2026-09-13 08:18 UTC from `traces.jsonl` and `agent_transcripts.jsonl`: 250 requests served by the orchestrator (D13–D17). The per-request reflection reads worker flags; this report reads the telemetry of the whole run so the same signals can be judged across requests.
+Generated 2026-09-13 13:29 UTC from `traces.jsonl` and `agent_transcripts.jsonl`: 250 requests served by the orchestrator (D15–D19). The per-request reflection reads worker flags; this report reads the telemetry of the whole run so the same signals can be judged across requests.
 
 ## Outcomes
 
@@ -15,7 +15,7 @@ Generated 2026-09-13 08:18 UTC from `traces.jsonl` and `agent_transcripts.jsonl`
 - Score gate: affordable_now 55 (22%), search 195 (78%); plan-search steps skipped: 110
 - Recall source: card 250
 - Iterations: 1× 250; re-planned requests: 0
-- Tool calls per request: 19.9; wall time per request: 17 ms
+- Tool calls per request: 20.9; wall time per request: 13 ms
 - Raw rows fetched from disk (historian): 17 request(s)
 - Explanations: 0 model call(s), 250 from the template (a --no-llm run); critiques 0, model-planned 0; tokens 0
 - Cross-request feedback applied (earlier request of the same user re-planned / low confidence): 0
@@ -60,15 +60,15 @@ Generated 2026-09-13 08:18 UTC from `traces.jsonl` and `agent_transcripts.jsonl`
 
 | Tool | Avg ms | Calls |
 |---|---|---|
-| expense_impact | 3.6 | 250 |
-| enumerate_candidate_plans | 2.6 | 195 |
-| counterfactual_without_messages | 2.5 | 250 |
-| spending_score | 1.9 | 250 |
-| list_payment_options | 1.8 | 250 |
-| recall_user_history | 0.5 | 250 |
-| check_plan_safety | 0.4 | 203 |
+| expense_impact | 2.4 | 250 |
+| counterfactual_without_messages | 2.0 | 250 |
+| enumerate_candidate_plans | 1.9 | 195 |
+| list_payment_options | 1.5 | 250 |
+| spending_score | 1.3 | 250 |
+| recall_user_history | 0.4 | 250 |
 | score_gate | 0.3 | 250 |
-| list_evidence | 0.3 | 250 |
+| check_plan_safety | 0.3 | 203 |
+| list_evidence | 0.2 | 250 |
 | project_balance | 0.2 | 250 |
 
 ## Low-confidence requests

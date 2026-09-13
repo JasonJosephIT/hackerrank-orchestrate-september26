@@ -37,13 +37,13 @@ PREREQS = {
     "list_payment_options": ["recall_user_history"], "candidate_spending_changes": ["recall_user_history"],
     "score_gate": ["amount_safe_today", "earliest_full_payment_date", "list_payment_options", "candidate_spending_changes"],
     "enumerate_candidate_plans": ["score_gate"], "rank_and_choose": ["enumerate_candidate_plans"],
-    "spending_score": ["recall_user_history"], "expense_impact": ["rank_and_choose"], "account_factors": [],
+    "account_profile": ["recall_user_history"], "spending_score": ["account_profile"], "expense_impact": ["rank_and_choose"], "account_factors": [],
     "check_plan_safety": ["rank_and_choose"], "counterfactual_without_messages": ["rank_and_choose"],
     "build_decision_packet": ["rank_and_choose", "spending_score", "expense_impact"], "write_explanation": ["build_decision_packet"],
     "audit_output_row": ["write_explanation"],
 }
 MANDATORY = ["recall_user_history", "amount_safe_today", "earliest_full_payment_date", "score_gate", "enumerate_candidate_plans",
-             "rank_and_choose", "spending_score", "expense_impact", "check_plan_safety"]
+             "rank_and_choose", "account_profile", "spending_score", "expense_impact", "check_plan_safety"]
 GATED = {"enumerate_candidate_plans", "rank_and_choose"}     # skipped when the score gate settled the request
 DELIVER = ["build_decision_packet", "write_explanation", "audit_output_row"]
 
@@ -154,6 +154,7 @@ class RulePlanner:
             Step("g1", "planner", "score_gate", why="settle the request from the card's headroom when a threshold makes it exact"),
             Step("p3", "planner", "enumerate_candidate_plans", why="every rule-allowed plan, keeping the safe ones (skipped when gated)"),
             Step("p4", "planner", "rank_and_choose", why="six-rule ranking; the best safe plan sets status and method (skipped when gated)"),
+            Step("s0", "scorer", "account_profile", why="income pattern and how far to trust the income (D14; cached model call or rules baseline)"),
             Step("s1", "scorer", "spending_score", why="account health before the request"),
             Step("s2", "scorer", "expense_impact", why="how much the chosen plan moves the score and headroom"),
             Step("s3", "scorer", "account_factors", why="cross-user two-factor profile for confidence", optional=True),
@@ -176,6 +177,7 @@ class LLMPlanner:
               "(each owned by a worker). Output ONLY a JSON array of steps in execution order, each {\"tool\": name, \"args\": {}, \"why\": short}. "
               "Rules: recall_user_history first; amount_safe_today and earliest_full_payment_date before enumerate_candidate_plans; "
               "score_gate after list_payment_options and candidate_spending_changes and before enumerate_candidate_plans; "
+              "account_profile before spending_score; "
               "rank_and_choose before spending_score/expense_impact/check_plan_safety; do not include build_decision_packet, "
               "write_explanation or audit_output_row (the orchestrator appends them). Skip tools that cannot matter for this goal "
               "(e.g. list_payment_options when the user accepts full payment only and partial is not allowed). 6 to 12 steps.")
@@ -268,7 +270,7 @@ class Orchestrator:
         self.llm_reflect = (os.environ.get("BUYORWAIT_AGENT_LLM_REFLECT", "0") == "1") if llm_reflect is None else llm_reflect
         self.llm_reflect = self.llm_reflect and client is not None
         # run-level memory of reflections, keyed by user: a later request for the same user in this run inherits
-        # a concern when an earlier one needed a re-plan or ended with low confidence (D17)
+        # a concern when an earlier one needed a re-plan or ended with low confidence (D19)
         self.run_log: dict[str, list[dict]] = {}
 
     # ---- entry -------------------------------------------------------------------------
@@ -337,6 +339,14 @@ class Orchestrator:
                         sp.set(**{"buyorwait.explanation_reused": True, "buyorwait.fallback_used": False})
                     elif self.use_llm:
                         sp.set_genai("groq", u, fallback_used=bool(u.get("fallback")))
+            elif s.tool == "account_profile":
+                with self.tracer.span("profile", worker=s.worker) as sp:      # D14: gen_ai usage when the model was called
+                    rep = WORKERS[s.worker].run(mem, step)
+                    u = rep.result.get("usage", {}) if rep.ok else {}
+                    sp.set(ok=rep.ok, archetype=rep.result.get("archetype"), adjustment=rep.result.get("adjustment"),
+                           source=rep.result.get("source"), cache_hit=bool(u.get("cache_hit")))
+                    if self.use_llm and self.lt.use_profile and self.lt.profile_cache is not None and not u.get("cache_hit"):
+                        sp.set_genai("groq", u, fallback_used=rep.result.get("source") != "llm")
             else:
                 with self.tracer.span("agent.step", worker=s.worker, tool=s.tool, iteration=iteration) as sp:
                     rep = WORKERS[s.worker].run(mem, step)
@@ -401,7 +411,7 @@ class Orchestrator:
             confidence = "medium"
         else:
             confidence = "high"
-        # feedback from earlier requests of the same user in this run (run-level memory, D17)
+        # feedback from earlier requests of the same user in this run (run-level memory, D19)
         prior = prior or []
         if prior and not replan:
             worrying = [q for q in prior if q["replanned"] or q["confidence"] == "low"]

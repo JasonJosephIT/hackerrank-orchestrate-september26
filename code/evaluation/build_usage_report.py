@@ -23,7 +23,8 @@ PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing (console
     "meta-llama/llama-4-scout-17b-16e-instruct": (0.11, 0.34),
 }
 PROVIDER = {"groq": "Groq"}
-STAGES = {"explain": "decision_explanation (explainer worker)", "agent.plan": "orchestrator planning (opt-in, --planner llm)",
+STAGES = {"explain": "decision_explanation (explainer worker)", "profile": "account profile (scorer worker, D14; cached)",
+          "agent.plan": "orchestrator planning (opt-in, --planner llm)",
           "agent.critique": "orchestrator critique (opt-in, --llm-reflect)"}
 PRICE_NOTE = "; ".join(f"{m} ${pi:.2f} in / ${po:.2f} out" for m, (pi, po) in PRICES.items())
 
@@ -56,8 +57,10 @@ def main(path: Path, note: str | None = None) -> int:
              f"{len(requests)} requests processed (OpenTelemetry spans, `gen_ai.*` attributes). "
              f"`python3 code/main.py` writes this file only on a full run; `--samples`, `--explain` and `--limit` use separate trace files.", "",
              "The deterministic engine (intake, forecast, plans, verification) makes no model calls. In the default agentic "
-             "run (D13) the LLM writes `decision_explanation` only; a template fallback is used when a call fails, so fallbacks "
-             "are listed too. The orchestrator's LLM planner and critique are opt-in and appear as separate stages when used.", "",
+             "run (D15) the LLM is called for the account profile (D14: archetype + a capped income-reliability supplement, "
+             "score/explanation layer only, cached in `code/evidence/account_profiles.json` so a cache hit makes no call) and "
+             "to write `decision_explanation`; fallbacks (rules baseline / template) are listed too. The orchestrator's LLM "
+             "planner and critique are opt-in and appear as separate stages when used.", "",
              "| Provider | Model | Calls | Input tokens | Output tokens | Total tokens | Est. cost (USD) | Fallbacks |",
              "|---|---|---|---|---|---|---|---|"]
     tot = {"calls": 0, "input": 0, "output": 0, "cost": 0.0, "fallbacks": 0}

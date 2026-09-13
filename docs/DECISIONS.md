@@ -125,11 +125,55 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 
 **Before → after (flag off → on) on the samples.** Commitment load rises 25–45 points across the board because almost every stream carries ~6 months of tenure (e.g. 06: 48.0 → 71.8, 24: 28.1 → 62.7, 25: 19.3 → 56.9); it now separates long habits from new commitments instead of measuring size. Income reliability: 02 (raise announced by message, 33.3M → 42.75M IDR) 100 → 83.5; 06 (temporary lower pay in history) 60 → 84.6; 08 60 → 80.2; 09 (variable freelance) 60 → 85.3; users with a fully proven salary stay at 100. Composite before/after the request moves with them (06: 56.9/35.9 → 66.5/45.6). The decision packet now carries `established_habits_already_in_balance` (top two absorbed streams) and `income_increase_not_yet_proven` so the explanation can say what moved the score and what did not.
 
-## D13 — Agentic runtime: orchestrator, workers, tools, reflection (user direction, 2026-09-13 morning IST)
+## D13 — Conservative mode for irregular income: haircut + reserve, behind a flag (2026-09-13, score-influence session)
+
+**Question from Jason.** The Spending Score only reached `decision_explanation`. Can it make the *decision* safer, not just describe the account?
+
+**Decision.** Two deterministic safety levers, driven by the same irregularity signal the score reads (a user whose income is a variable pool rather than a regular salary), applied only in the safer direction and only when enabled:
+
+- **Income haircut** — the variable income pool is forecast at the `income_haircut_quantile` (0.25) of its settled history instead of the mean (`intake.py`, `_stat("q0.25")`).
+- **Reserve cushion** — `FinancialState.reserve = reserve_months (0.1) × monthly essential outflow` (protected recurring debits, else all recurring debits). Every safety check in `forecast.py` compares against `state.floor = minimum + reserve`; `score.py` headroom and the impact band use the same floor so the two views never disagree. The reserve stays even when a message later removes the pool (user_12): the account is still irregular.
+
+Enable with `python3 code/main.py --conservative` or `BUYORWAIT_CONSERVATIVE=1`. Off by default. The LLM never touches either lever; a future account-profile stage may only feed the explanation and cut ordering (the one-way valve).
+
+**Evidence.** Only 3 of the 25 samples are irregular (09, 10, 12). Sweep on the samples (per-field matches, baseline `amount=12 affordability=25 recommended=25 payment=24 earliest=24 spending=24`):
+
+| Setting | Result |
+|---|---|
+| haircut q ∈ {0.35, 0.25, 0.1}, no reserve | identical to baseline (the trough falls before the next variable credit) |
+| reserve 0.1 months, no haircut | identical match counts; sample 10 moves 32,526.82 → 18,434.45 toward the truth of 12,700 |
+| reserve 0.25 months | sample 10 → 0; sample 12 gains an unneeded spending change (`spending=23`) |
+| reserve 0.5 months | `amount=11 earliest=23 spending=22` |
+
+Defaults are therefore the largest no-regression values (q=0.25, 0.1 months). On the full 250-request run the flag changes 5 `amount_safe_to_pay` values, 1 earliest date and 2 spending-change rows, and no status or method. Because the hidden truth follows the spec's arithmetic and the default reproduces the samples exactly, the submitted `output.csv` is produced with the flag **off**; the flag is the product-side "make me safer" setting, documented and tested (`tests/test_forecast.py`, `tests/test_evidence.py`).
+
+## D14 — LLM account profile: archetype + capped income-reliability supplement (2026-09-13, score-influence session)
+
+**Question from Jason.** Let the model recognise *what kind of earner* an account is (freelancer, gig worker, salaried with a side income, household with two streams, someone between jobs) from the income pattern and the messages, and give a supplemental score, up or down, that arithmetic alone cannot produce.
+
+**Design** (`code/buyorwait/profile.py`, one call per user and request date):
+
+1. **Typed features, never raw text.** `profile_features(state)` packs each income stream (description, cadence, occurrences, median, coefficient of variation, last six amounts), settled one-off credits, pending/scheduled credits, the typed message facts from `evidence.py`, the income notes and the variable-pool flag. Messages stay untrusted: only their validated facts reach the model, and the system prompt frames the packet as data.
+2. **Rules baseline first.** `deterministic_archetype()` labels the account from the same features (salaried, salaried_plus_side, salaried_plus_variable, freelance, gig, mixed_household, transition, no_income). The model starts from that label and may only move away from it when the packet supports it.
+3. **Closed-schema answer.** Groq `openai/gpt-oss-120b` (`BUYORWAIT_PROFILE_MODEL` overrides), temperature 0, JSON mode. `validate()` rejects anything outside the schema: archetype not in the enum, adjustment outside -2..2 or non-integer, confidence outside 0..1, a rationale with digits or event ids, or an evidence id that was not in the packet. A rejected answer falls back to the rules label with adjustment 0, so the run never blocks and never trusts free text.
+4. **Cache.** `code/evidence/account_profiles.json`, keyed `user@request_date` with a hash of the features; a changed state invalidates the entry, `--refresh-profiles` ignores it, `--no-profile` skips the stage.
+5. **Where it lands.** `score.py` adds `PROFILE_POINTS (5) × adjustment` to `income_reliability` (±10 points at most; the composite weight of that component is 0.20, so ±2 composite points). The explanation packet carries `score.income_pattern` (archetype in words + the rationale) and the prompt prefers that note for its income sentence. `--explain` prints the full profile with evidence ids.
+
+**Boundary.** Same as D4 and D13: the profile never reaches a contract column. The deterministic levers of D13 are the only things that make the *decision* safer; the profile makes the *score and the explanation* right about why. A one-way valve keeps a hallucinated "this freelancer is fine" harmless: at worst the explanation is warmer, never the amount larger.
+
+**Cost.** One extra call per request (about 0.7–1.0k input tokens, ≤150 output); cached across runs, so the final full-dataset run reports it once. Telemetry: a `profile` span per request with `gen_ai.*` attributes, `archetype`, `adjustment`, `source` and `cache_hit`; `build_usage_report.py` counts it with the explanation calls.
+
+**Evidence (25 samples, `openai/gpt-oss-20b`).** Contract fields identical to the baseline (`amount=12 affordability=25 recommended=25 payment=24 earliest=24 spending=24`), as the boundary requires. Profiles: 20 salaried at adjustment 0 (the intended neutral case), user_11 salaried_plus_variable at 0 (settled commissions), user_02 and user_14 +1 (a confirmed raise; a salary that resumed), user_06 −1 (temporary reduced pay, message_04), user_10 −1 (platform payout pending, message_07), user_05 and user_12 −2 (final payroll; employment ended, message_09). Every non-zero call cites the message or event that supports it. One answer was rejected by the validator on the first pass (a rationale containing "every 17 days" under the original no-digits rule); the rule now blocks only amounts (three or more digits) and ids, and the re-run accepted it.
+
+**Model note and cache state.** Groq's free tier caps each model at 200k tokens per day (rolling). `openai/gpt-oss-120b` ran out during this session, so the 250-request cache was built on `openai/gpt-oss-20b` (`BUYORWAIT_PROFILE_MODEL`); the 20b quota then ran out during a rebuild triggered by adding `income_descriptions` to the packet, and the 120b quota that had come back covered only a handful more. Result: 275 cached answers (250 requests + 25 samples), 49 with the current features hash and 226 from the first build. Rather than drop those to the rules baseline, `account_profile()` reuses the earlier validated answer for the same user when the model is unavailable or answers badly, marks it `source=llm-stale`, and never writes the stale copy back; `--refresh-profiles` when quota is available brings everything current. Rate-limit handling gives up immediately on a "tokens per day" error instead of retrying eight times, and parses millisecond retry hints. Both quotas were exhausted at the end of the session, so the final full run (`output.csv` + `usage_report.md` with the profile calls) is still to be done once a window is available.
+
+Distribution of the 275 cached profiles: salaried 219, transition 27, freelance 22, salaried_plus_variable 6, gig 1; adjustments −2: 17, −1: 18, 0: 218, +1: 22; 3 non-zero answers cite no evidence id (all three are −2 "final payroll / employment ended" calls that rest on a note rather than an id).
+
+## D15 — Agentic runtime: orchestrator, workers, tools, reflection (user direction, 2026-09-13 morning IST)
 
 **Direction from Jason.** Keep the system, make it agentic: be explicit about memory (all history at once vs. per-request retrieval), add an orchestrator that manages the user's history and plans how to use the available functions, workers that each own one quantitative aspect (account reconstruction, forecast, plans, score, audit, explanation), a goal the orchestrator reflects against, and turn what exists into functions/tools the workers and the orchestrator call.
 
-**Memory answer.** The dataset was already loaded once per process and every request already recalled one user's history as of `request_date` (`build_state` filters by `user_id`, cuts settled history at the request date, reserves pending/scheduled rows, applies only messages sent on or before the request date or tied to the request). D13 names the tiers (long-term = dataset + cached factors table; episodic = per-user recall at request time; working = per-request scratchpad + ledger) in `code/buyorwait/agent/memory.py` and keeps recall stateless: nothing from another user, nothing dated after the request, nothing carried between requests.
+**Memory answer.** The dataset was already loaded once per process and every request already recalled one user's history as of `request_date` (`build_state` filters by `user_id`, cuts settled history at the request date, reserves pending/scheduled rows, applies only messages sent on or before the request date or tied to the request). D15 names the tiers (long-term = dataset + cached factors table; episodic = per-user recall at request time; working = per-request scratchpad + ledger) in `code/buyorwait/agent/memory.py` and keeps recall stateless: nothing from another user, nothing dated after the request, nothing carried between requests.
 
 **Decision.** `code/buyorwait/agent/` (docs/AGENTIC.md):
 - `tools.py` — 18 tools wrapping the existing engine (intake, forecast, plans, score, factors, verify, explain), each with a description and JSON-schema arguments, reading/writing working memory; `registry.schemas()` renders OpenAI-style function schemas.
@@ -141,7 +185,7 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 
 **Rejected.** Letting the LLM planner run tools directly in a tool-calling loop (unbounded calls, non-deterministic output; the validated one-shot plan gives the same plan quality with a fixed budget). Sharing recalled state across requests of the same user (not needed: users and requests are one-to-one; and a later request must not see later messages). Cross-request memory of decisions (no signal to learn from without labels).
 
-## D14 — Account cards as memory, score gate before the plan search (user direction, 2026-09-13)
+## D16 — Account cards as memory, score gate before the plan search (user direction, 2026-09-13)
 
 **Direction from Jason.** Go the score route: get the score deterministically once, apply the request to it, and let a threshold decide when it can; keep the scores in RAM rather than the eight CSVs.
 
@@ -156,17 +200,17 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 
 **Rejected.** Deciding the middle statuses from a fitted score threshold (25 labels, and the answer depends on per-request options); storing cards in the repo (derived data; the cache rebuilds in 6 s); keeping raw events on the card (the streams already carry their history lists).
 
-## D15 — Cards in RAM, tables on disk by section (user direction, 2026-09-13)
+## D17 — Cards in RAM, tables on disk by section (user direction, 2026-09-13)
 
 **Direction from Jason.** House the cards in RAM and retrieve certain sections of the tables from disk when needed; confirm decisions are made off the cards.
 
 **Decision.** `code/buyorwait/agent/store.py` (`DiskTables`): each CSV is indexed once by its key column as byte ranges (all seven keyed files are contiguous per `user_id` / `request_id` and have no embedded newlines; index cached in `.cache/index/`, invalidated on size/mtime change). `slice(table, key)` reads one user's or one request's rows by seeking; `dataset_for(user, request)` assembles a one-user `Dataset` (rates read whole, ~130 rows) via the new `Dataset.from_frames`, which is all `build_card` needs. `LongTermMemory` now carries `cards` (RAM) and `disk`; `UserMemory.card` builds a missing card from disk sections and adds it to the store; the historian's `fetch_events` tool reads raw rows on demand (used when the evidence carries an uncertainty flag or an image-filled amount). `main.py` no longer loads the dataset when the card cache covers the run (`--load-dataset` restores the old behaviour); it reports section reads and peak RSS.
 
-**Measured.** Card from disk slices == card from the full dataset on 65 users (0 mismatches, 81 ms per build). Warm full run: 0 KB of tables loaded, 190 KB read in 17 section reads, peak RSS 115 MB, 250 rows identical to the linear pipeline. All 25 samples served on card misses from disk: 344 KB read, rows identical. Decisions are made off the cards: nothing on the decision path reads a table (D14 parity holds).
+**Measured.** Card from disk slices == card from the full dataset on 65 users (0 mismatches, 81 ms per build). Warm full run: 0 KB of tables loaded, 190 KB read in 17 section reads, peak RSS 115 MB, 250 rows identical to the linear pipeline. All 25 samples served on card misses from disk: 344 KB read, rows identical. Decisions are made off the cards: nothing on the decision path reads a table (D16 parity holds).
 
 **Rejected.** A database (SQLite/DuckDB) for the tables: the byte-range index gives per-user reads in one seek with no dependency, and the dataset is fixed for the challenge. Memory-mapping the frames: pandas would still parse whole files. Dropping the on-demand path entirely: a miss must be servable without the whole table, otherwise "cards in RAM" is only true for pre-built users.
 
-## D16 — ICM workspace layer over the orchestration (user direction, 2026-09-13)
+## D18 — ICM workspace layer over the orchestration (user direction, 2026-09-13)
 
 **Direction from Jason.** Use the uploaded ICM template (Interpretable Context Methodology skill: `icm-scaffold`, `icm-sync`, `icm-context-scaffold`) to coordinate the file structure for the agent orchestration.
 
@@ -182,7 +226,7 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 
 **Rejected.** Full mode with physical `stages/NN/` folders and `output/` directories: the stages here are Python workers exchanging working-memory keys, not markdown hand-offs, and a human review gate between workers would break a 250-request batch; the `--explain` transcript is the review surface instead. Replacing `CLAUDE.md` with the identity file (loses the mandatory logging protocol).
 
-## D17 — Telemetry feeds the reflection: reflect spans and a run-level reflection (user direction, 2026-09-13)
+## D19 — Telemetry feeds the reflection: reflect spans and a run-level reflection (user direction, 2026-09-13)
 
 **Direction from Jason.** Is telemetry involved in the reflection? It was write-only. Add both proposed pieces.
 
@@ -195,7 +239,7 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 
 **Rejected.** Letting the run-level statistics change a decision (no labels to justify it; the loop only moves confidence and the explanation). Persisting the run log across runs (users are one-to-one with requests here; a persisted log would need invalidation rules the dataset cannot exercise).
 
-## D18 — output.csv regenerated under exhausted quotas: qwen/qwen3.8-27b run + reused explanations (user direction, 2026-09-13)
+## D20 — output.csv regenerated under exhausted quotas: qwen/qwen3.8-27b run + reused explanations (user direction, 2026-09-13)
 
 **Direction from Jason.** Regenerate `output.csv` with `openai/gpt-oss-20b`.
 

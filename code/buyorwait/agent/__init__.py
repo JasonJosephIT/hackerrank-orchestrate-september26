@@ -1,1 +1,1 @@
-"""Agentic runtime: memory, tools, workers, orchestrator (docs/AGENTIC.md, D13)."""
+"""Agentic runtime: memory, tools, workers, orchestrator (docs/AGENTIC.md, D15)."""

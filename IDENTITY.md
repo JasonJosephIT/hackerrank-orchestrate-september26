@@ -23,11 +23,11 @@ hackerrank-orchestrate-september26/
 ├── code/
 │   ├── main.py               # Entry point: cards -> orchestrator per request -> verify -> output.csv
 │   ├── package.py            # Builds code.zip for submission
-│   ├── buyorwait/            # Deterministic engine: intake, evidence, forecast, plans, score, factors, verify, explain, render, telemetry
+│   ├── buyorwait/            # Deterministic engine: intake, evidence, forecast, plans, score, factors, profile (D14), verify, explain, render, telemetry
 │   │   └── agent/            # Agentic runtime: memory, cards, store (disk), tools, workers, orchestrator  (CONTEXT.md = stage contracts)
 │   ├── evaluation/           # Sample scorer, usage report builder, usage_report.md, packets of the last run
 │   └── evidence/             # image_facts.json — cached, hand-verified image amounts
-├── docs/                     # DECISIONS.md (D1–D16 design log), AGENTIC.md (runtime), PLAN.md, SCORING_FACTORS.md, ABSORPTION.md, INTERVIEW.md
+├── docs/                     # DECISIONS.md (D1–D20 design log), AGENTIC.md (runtime), PLAN.md, SCORING_FACTORS.md, ABSORPTION.md, INTERVIEW.md
 ├── tests/                    # pytest: contract, forecast, evidence, score, factors, sample regression, agent parity
 ├── scratch/                  # Throwaway analysis scripts (not part of the solution)
 └── .cache/                   # Layer 4 (gitignored): cards.jsonl, index/, traces*.jsonl, agent_transcripts.jsonl

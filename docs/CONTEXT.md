@@ -8,8 +8,8 @@ The interview script and the append-only design log. Read `DECISIONS.md` before 
 
 ```
 docs/
-├── DECISIONS.md         # D1–D16, dated: Decision / Why / Rejected (append-only)
-├── AGENTIC.md           # Memory tiers, orchestrator loop, workers, tools, gate, disk store (D13–D15)
+├── DECISIONS.md         # D1–D20, dated: Decision / Why / Rejected (append-only)
+├── AGENTIC.md           # Memory tiers, orchestrator loop, workers, tools, gate, disk store, telemetry-fed reflection (D15–D19)
 ├── SCORING_FACTORS.md   # Two-factor account profile (D12 groundwork)
 ├── ABSORPTION.md        # Symmetric absorption/trust weighting in the score layer (D12)
 ├── PLAN.md              # Timebox and progress of the build session

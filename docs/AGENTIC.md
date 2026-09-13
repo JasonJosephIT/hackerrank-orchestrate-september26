@@ -1,4 +1,4 @@
-# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13), account cards and score gate (D14), tables on disk (D15), telemetry-fed reflection (D17)
+# AGENTIC.md — memory, orchestration, workers, tools, reflection (D15), account cards and score gate (D16), tables on disk (D17), telemetry-fed reflection (D19)
 
 How a request is served in the default runtime (`python3 code/main.py`). The legacy linear pipeline is still available with `--pipeline` and produces identical contract columns; the agentic runtime adds planning, worker reports, a reflection against the goal, and a transcript per request.
 
@@ -6,7 +6,7 @@ How a request is served in the default runtime (`python3 code/main.py`). The leg
 
 **Question asked:** are we loading all history at once, or going request by request and searching the user's history?
 
-**Answer: neither, since D14/D15. The cards live in RAM; the raw tables stay on disk and are read by section only when a card is missing or a worker asks for raw rows.**
+**Answer: neither, since D16/D17. The cards live in RAM; the raw tables stay on disk and are read by section only when a card is missing or a worker asks for raw rows.**
 
 | Tier | What | When | Where |
 |---|---|---|---|
@@ -42,7 +42,7 @@ Orchestrator.handle(request)
 - `rules` (default): a deterministic plan conditioned on the request (e.g. the option review is phrased differently when the user only accepts full payment; the counterfactual step is always planned but skips itself when no message facts were applied). Reproducible output.
 - `llm` (`--planner llm` or `BUYORWAIT_AGENT_PLANNER=llm`): Groq (`openai/gpt-oss-120b`) receives the goal, the criteria and the tool catalogue and proposes an ordered JSON plan. `validate_plan` drops unknown tools, inserts missing prerequisites (`PREREQS`) and mandatory steps (`MANDATORY`) in dependency order, and appends the delivery steps. If the call fails or returns no JSON, the rule plan is used. Measured on `request_12`: the model proposed 10 steps, the validator inserted `rank_and_choose`, the result was identical to the rule plan's decision.
 
-**Score gate (D14).** After the forecaster and the option/change listings, the planner runs `score_gate`, which settles the request from the card's numbers when a threshold makes the answer exact and routes it to the plan search otherwise:
+**Score gate (D16).** After the forecaster and the option/change listings, the planner runs `score_gate`, which settles the request from the card's numbers when a threshold makes the answer exact and routes it to the plan search otherwise:
 
 | Route | Rule | Why it is exact |
 |---|---|---|
@@ -79,7 +79,7 @@ Concerns are added from worker flags: the decision depends on message evidence (
 | historian | `recall_user_history`, `list_commitments`, `list_reserved_flows`, `list_evidence`, `fetch_events` (on demand, disk) | card (disk sections on a miss or a raw fetch) | `state`, `change_candidates`; `no_income_forecast`, `structural_deficit`, `evidence_uncertainty`, `message_facts_applied` |
 | forecaster | `project_balance`, `amount_safe_today`, `earliest_full_payment_date` | `state` | `projection`, `safe_today`, `earliest`; `baseline_breach`, `nothing_safe_today`, `no_full_payment_date` |
 | planner | `list_payment_options`, `candidate_spending_changes`, `score_gate`, `enumerate_candidate_plans`, `rank_and_choose` | `state`, `safe_today`, `earliest`, options | `options`, `candidates`, `decision`; `no_eligible_option`, `no_safe_plan`, `not_affordable`, `misses_deadline`, `needs_spending_changes` |
-| scorer | `spending_score`, `expense_impact`, `account_factors` | `state`, `decision` | `score`, `impact`, `factors`; `impact_caution`, `impact_unsafe`, `fragile_account` |
+| scorer | `account_profile`, `spending_score`, `expense_impact`, `account_factors` | `state` (+ card profile features), `decision` | `account_profile`, `score`, `impact`, `factors`; `impact_caution`, `impact_unsafe`, `fragile_account` |
 | auditor | `check_plan_safety`, `counterfactual_without_messages`, `audit_output_row` | `decision`, `state` | `counterfactual`, `row`, `audit_errors`; `chosen_plan_unsafe`, `depends_on_messages`, `contract_violation` |
 | explainer | `build_decision_packet`, `write_explanation` | `decision`, `score`, `impact`, `reflection` | `packet`, `explanation`, `usage`; `template_explanation` |
 
@@ -97,6 +97,7 @@ Every function that already existed is now a named tool with a description and a
 | `list_payment_options` | `Dataset.options` + the profile's method and month limits |
 | `score_gate` | the projection's headroom + the card's preferences/options/change candidates; builds the trivial plan via `plans.choose` |
 | `enumerate_candidate_plans`, `rank_and_choose` | `plans.enumerate_plans_for` (profile row + option rows from the card) + `plans.choose` (six-rule ranking, with an `exclude` list for re-planning) |
+| `account_profile` | `profile.profile_from_features` over the card's D14 packet (else `profile.account_profile`); cached in `code/evidence/account_profiles.json` |
 | `spending_score`, `expense_impact` | `score.spending_score / expense_impact` |
 | `account_factors` | `factors.account_factors` (cached once per run) |
 | `counterfactual_without_messages` | `build_state(cfg={"use_messages": False})` + `plans.decide` |
@@ -105,7 +106,7 @@ Every function that already existed is now a named tool with a description and a
 
 Because each tool delegates, `tests/test_agent.py::test_orchestrator_matches_linear_pipeline_on_samples` asserts the agentic row equals the linear pipeline's row on all 25 samples, explanation included.
 
-## 5. Observability, and the reflection that reads it (D17)
+## 5. Observability, and the reflection that reads it (D19)
 
 One trace per request (`buyorwait.request`, attributes: final status, method, confidence, iterations, tool calls, recall source, gate route), an `agent.plan` span, an `agent.step` span per tool call (worker, tool, iteration, ok, flags raised), an **`agent.reflect` span per iteration** carrying the seven goal checks as `check.<name>` booleans, the concerns, the confidence and whether a re-plan follows, an `agent.critique` span for the optional model critique, and the `explain` span with `gen_ai.*` usage. Spans go to `.cache/traces.jsonl` (OTLP export when `OTEL_EXPORTER_OTLP_ENDPOINT` is set); findings and ledgers go to `.cache/agent_transcripts.jsonl`.
 

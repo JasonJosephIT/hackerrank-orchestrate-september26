@@ -330,7 +330,7 @@ def rank_and_choose(mem: UserMemory, exclude: list | None = None) -> dict:
 
 
 @registry.register("score_gate", """
-    Score gate (D14): settle the request from the card's numbers when a threshold makes the answer exact,
+    Score gate (D16): settle the request from the card's numbers when a threshold makes the answer exact,
     otherwise route it to the plan search. headroom = projected trough - minimum (the liquidity basis of the
     score); hurt = requested / headroom. Rules: headroom >= requested and full payment accepted -> affordable_now
     (paying today keeps every projected balance above the minimum, and a single full payment today wins the
@@ -409,6 +409,33 @@ def tool_account_factors(mem: UserMemory) -> dict:
     return dict(**out, summary=f"spending {out['spending_factor']} ({out['spending_band']}), stability {out['stability_factor']} ({out['stability_band']})")
 
 
+@registry.register("account_profile", """
+    Account profile (D14): what kind of earner this is and how much the score should trust the income. From the
+    card's typed income features (streams, one-off and pending credits, message facts; never raw text) a rules
+    baseline picks an archetype; when a model is available one cached Groq call may adjust income reliability by
+    at most two steps (±10 points). Score and explanation layer only; never a contract column.""", None, owner="scorer")
+def tool_account_profile(mem: UserMemory) -> dict:
+    from ..profile import account_profile, profile_from_features
+    st, lt = mem.require("state"), mem.long_term
+    use_llm = bool(mem.get("use_llm")) and lt.use_profile and lt.profile_cache is not None
+    card = mem.card
+    feats = card.profile_features() if card is not None else None
+    key = f"{st.user_id}@{st.request_date}"
+    if feats is not None:
+        prof, usage = profile_from_features(feats, key, client=mem.get("llm_client"), cache=lt.profile_cache,
+                                            use_llm=use_llm, refresh=lt.refresh_profiles)
+    else:
+        prof, usage = account_profile(st, client=mem.get("llm_client"), cache=lt.profile_cache, use_llm=use_llm,
+                                      refresh=lt.refresh_profiles)
+    st.profile = prof
+    mem.put("account_profile", prof)
+    mem.put("profile_usage", usage)
+    src = "cache" if usage.get("cache_hit") else prof["source"]
+    return dict(archetype=prof["archetype"], adjustment=prof["adjustment"], confidence=prof.get("confidence"),
+                rationale=prof.get("rationale"), source=prof["source"], usage=usage,
+                summary=f"{prof['archetype']} {prof['adjustment']:+d} ({src}{'; ' + usage['error'] if usage.get('error') else ''})")
+
+
 # ------------------------------------------------------------------------------------------
 # Auditor tools
 # ------------------------------------------------------------------------------------------
@@ -461,6 +488,9 @@ def build_decision_packet(mem: UserMemory) -> dict:
         kw = _change_kwargs(dec.plan.changes)
         min_proj = round(min(low for _, _, low in projection(dec.state, extra=extra, **kw)), 2)
     packet = decision_packet(dec, min_proj, {"spending_score": mem.get("score") or {}, "expense_impact": mem.get("impact") or {}})
+    prof = mem.get("account_profile") or getattr(dec.state, "profile", None)
+    if prof:
+        packet["account_profile"] = {k: prof.get(k) for k in ("archetype", "adjustment", "confidence", "rationale", "evidence_ids", "source")}
     refl = mem.get("reflection")
     if refl:
         packet["reflection"] = {"confidence": refl["confidence"], "concerns": refl["concerns"][:2]}

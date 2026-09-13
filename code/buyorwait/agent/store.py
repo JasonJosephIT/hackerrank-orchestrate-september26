@@ -1,4 +1,4 @@
-"""Disk-backed tables: the raw dataset stays on disk; sections are read on demand (D15).
+"""Disk-backed tables: the raw dataset stays on disk; sections are read on demand (D17).
 
 `DiskTables` indexes each CSV once by its key column (`user_id` for profiles, events, messages, images;
 `request_id` for requests, samples, options) as byte ranges, since every file is contiguous per key

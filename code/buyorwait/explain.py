@@ -36,7 +36,8 @@ def decision_packet(dec: Decision, min_projected: float | None = None, score: di
     return {
         "request_id": req.request_id, "request_type": req.request_type, "currency": st.currency,
         "requested_amount": req.amount, "request_date": str(req.request_date), "deadline": str(req.deadline),
-        "balance": st.balance, "minimum_balance": st.minimum, "amount_safe_to_pay": dec.safe_today,
+        "balance": st.balance, "minimum_balance": st.minimum, "conservative_reserve": st.reserve or None,
+        "irregular_income": st.irregular_income, "amount_safe_to_pay": dec.safe_today,
         "earliest_full_payment": str(dec.earliest) if dec.earliest else None,
         "status": dec.status, "method": dec.method,
         "payment_plan": [(str(d), a) for d, a in (p.payments if p else [])],
@@ -64,6 +65,9 @@ def _compact_score(score: dict | None) -> dict | None:
     absorbed = ss.get("_absorbed") or []
     if absorbed:   # long-standing habits already reflected in the balance (docs/ABSORPTION.md)
         out["established_habits_already_in_balance"] = [a["stream"] for a in absorbed[:2]]
+    prof = ss.get("_profile")
+    if prof and prof.get("archetype"):   # D14: income pattern, plain words only (no numbers, so the prose stays grounded)
+        out["income_pattern"] = {"archetype": prof["archetype"].replace("_", " "), "note": prof.get("rationale")}
     unproven = [d for d in (ss.get("_income_detail") or []) if d["increase"] > 0 and d["trust"] < 0.9]
     if unproven:
         out["income_increase_not_yet_proven"] = [d["stream"] for d in unproven[:2]]
@@ -120,7 +124,7 @@ Sentence 1 states the recommendation by method:
   wait -> "Wait until <plan date>, then pay <amount> in full."
   not_recommended -> "Do not proceed with the <requested_amount> request."
 Sentence 2 gives the key fact: the minimum balance kept, the salary date, a pending bill, or the shortfall between amount_safe_to_pay and requested_amount.
-Optional sentence 3 names the weakest score component in plain words.
+Optional sentence 3 names the weakest score component in plain words; when score.income_pattern is present, prefer its note (e.g. "your freelance income arrives in uneven invoices") and never quote its archetype label verbatim.
 Money: currency code then amount with thousands separators (EUR 620.40, INR 197,400). Dates as "15 June 2024".
 Examples:
   {"method":"wait","payment_plan":[["2024-06-15",12693000]],"currency":"IDR","minimum_balance":30686600} -> Wait until 15 June 2024, then pay IDR 12,693,000 in full. Paying sooner would put the IDR 30,686,600 minimum at risk.
@@ -216,8 +220,11 @@ def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None,
             resp = client.chat.completions.create(**kwargs)
             _pace_after_call(resp.usage.total_tokens or (resp.usage.prompt_tokens + resp.usage.completion_tokens))
         except RateLimitError as e:  # free tier: 8k tokens/minute; wait for the window the API asks for
-            m = re.search(r"try again in ([\d.]+)s", str(e))
-            wait = min(60.0, float(m.group(1)) + 0.5) if m else 6.0 * (attempt + 1)
+            if "per day" in str(e).lower():     # daily quota: no amount of waiting inside this run will help
+                usage["error"] = "daily token limit reached for this model"
+                return None, usage
+            m = re.search(r"try again in ([\d.]+)(m?s)", str(e))
+            wait = min(60.0, float(m.group(1)) / (1000.0 if m.group(2) == "ms" else 1.0) + 0.5) if m else 6.0 * (attempt + 1)
             usage["rate_limit_waits"] = usage.get("rate_limit_waits", 0) + 1
             if attempt == MAX_RETRIES:
                 usage["error"] = f"RateLimitError after {MAX_RETRIES} retries"

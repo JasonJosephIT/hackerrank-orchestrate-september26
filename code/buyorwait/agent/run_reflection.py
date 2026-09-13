@@ -1,4 +1,4 @@
-"""Run-level reflection over telemetry (D17): read the trace file and the agent transcripts of a full run and
+"""Run-level reflection over telemetry (D19): read the trace file and the agent transcripts of a full run and
 summarise what the orchestrator did across every request, so the observability turns into something that can be
 read back and acted on.
 
@@ -129,7 +129,7 @@ def render(sm: dict) -> str:
     pct = lambda x: f"{100.0 * x / n:.0f}%"
     L = ["# Run Reflection", "",
          f"Generated {sm['generated_at']} from `{Path(sm['traces']).name}` and `{Path(sm['transcripts']).name}`: "
-         f"{sm['requests']} requests served by the orchestrator (D13–D17). The per-request reflection reads worker flags; "
+         f"{sm['requests']} requests served by the orchestrator (D15–D19). The per-request reflection reads worker flags; "
          f"this report reads the telemetry of the whole run so the same signals can be judged across requests.", ""]
     if sm["requests"] == 0:
         L += ["> No agent traces found. Run `python3 code/main.py` (a full run) first.", ""]

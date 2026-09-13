@@ -1,4 +1,4 @@
-"""Account cards: the compact per-user memory the orchestrator serves requests from (D14).
+"""Account cards: the compact per-user memory the orchestrator serves requests from (D16).
 
 A card is everything request time needs about one user as of one request date, built once from the
 dataset by the deterministic intake and score layers:
@@ -28,9 +28,10 @@ import pandas as pd
 from ..evidence import Fact
 from ..intake import Dataset, FinancialState, Recurrence, build_state
 from ..plans import Request
+from ..profile import profile_features
 from ..score import spending_score
 
-CARD_VERSION = 1
+CARD_VERSION = 2          # 2: carries reserve / irregular_income (D13) and the account-profile features (D14)
 PROFILE_FIELDS = ("user_id", "home_currency", "current_available_balance", "minimum_balance_to_keep", "financial_priorities",
                   "expense_categories_to_protect", "expense_categories_user_is_willing_to_reduce",
                   "expense_categories_user_is_willing_to_stop", "payment_methods_user_will_consider", "max_installment_months")
@@ -66,9 +67,11 @@ def _fact_from_dict(d: dict) -> Fact:
 
 def _state_to_dict(st: FinancialState) -> dict:
     return dict(currency=st.currency, balance=st.balance, minimum=st.minimum,
+                reserve=float(getattr(st, "reserve", 0.0) or 0.0), irregular_income=bool(getattr(st, "irregular_income", False)),
                 recurring=[_rec_to_dict(r) for r in st.recurring],
                 fixed_flows=[(str(d), a, l) for d, a, l in st.fixed_flows],
-                notes=list(st.notes), facts=[_fact_to_dict(f) for f in st.facts])
+                notes=list(st.notes), facts=[_fact_to_dict(f) for f in st.facts],
+                profile_features=profile_features(st))      # D14 packet, built while the raw events are at hand
 
 
 def _state_from_dict(d: dict, user_id: str, as_of: date) -> FinancialState:
@@ -76,7 +79,8 @@ def _state_from_dict(d: dict, user_id: str, as_of: date) -> FinancialState:
                           recurring=[_rec_from_dict(r) for r in d["recurring"]],
                           fixed_flows=[(date.fromisoformat(x), a, l) for x, a, l in d["fixed_flows"]],
                           notes=list(d["notes"]), facts=[_fact_from_dict(f) for f in d["facts"]],
-                          events=pd.DataFrame({"user_id": pd.Series([user_id] * 0, dtype=str)}))
+                          events=pd.DataFrame({"user_id": pd.Series([user_id] * 0, dtype=str)}),
+                          reserve=float(d.get("reserve", 0.0) or 0.0), irregular_income=bool(d.get("irregular_income", False)))
 
 
 @dataclass
@@ -114,6 +118,10 @@ class AccountCard:
         src = self.state if use_messages or self.no_message_state is None else self.no_message_state
         return _state_from_dict(src, self.user_id, date.fromisoformat(self.as_of))
 
+    def profile_features(self) -> dict | None:
+        """The account-profile packet (D14) built at card time; None for cards built before version 2."""
+        return self.state.get("profile_features")
+
     def summary(self) -> dict:
         st = self.state
         return dict(user_id=self.user_id, as_of=self.as_of, currency=st["currency"], balance=st["balance"], minimum=st["minimum"],
@@ -122,8 +130,8 @@ class AccountCard:
                     factors=self.factors, bytes=len(json.dumps(asdict(self))))
 
 
-def build_card(ds: Dataset, req: Request, image_facts: dict[str, float], factors_row=None) -> AccountCard:
-    st = build_state(ds, req.user_id, req.request_date, image_facts, request_id=req.request_id)
+def build_card(ds: Dataset, req: Request, image_facts: dict[str, float], factors_row=None, cfg: dict | None = None) -> AccountCard:
+    st = build_state(ds, req.user_id, req.request_date, image_facts, cfg=cfg, request_id=req.request_id)
     prof = ds.profiles.loc[req.user_id]
     profile = {k: (float(prof[k]) if k in ("current_available_balance", "minimum_balance_to_keep") else str(prof[k])) for k in PROFILE_FIELDS}
     opts = ds.options[ds.options.request_id == req.request_id]
@@ -143,7 +151,7 @@ def build_card(ds: Dataset, req: Request, image_facts: dict[str, float], factors
                        stability_factor=float(factors_row.stability_factor), stability_band=str(factors_row.stability_band))
     nomsg = None
     if st.facts:
-        nomsg = _state_to_dict(build_state(ds, req.user_id, req.request_date, image_facts, cfg={"use_messages": False},
+        nomsg = _state_to_dict(build_state(ds, req.user_id, req.request_date, image_facts, cfg={**(cfg or {}), "use_messages": False},
                                            request_id=req.request_id))
     return AccountCard(req.user_id, str(req.request_date), req.request_id, profile, _state_to_dict(st), options, score, factors, nomsg)
 
@@ -171,7 +179,7 @@ class CardStore:
         self.by_request[card.request_id] = card.key
 
     @classmethod
-    def build(cls, ds: Dataset, image_facts: dict[str, float], rows, with_factors: bool = True) -> "CardStore":
+    def build(cls, ds: Dataset, image_facts: dict[str, float], rows, with_factors: bool = True, cfg: dict | None = None) -> "CardStore":
         from ..plans import request_from_row
         t0 = time.perf_counter()
         table = None
@@ -182,7 +190,7 @@ class CardStore:
         for row in rows:
             req = request_from_row(row)
             frow = table.loc[req.user_id] if table is not None and req.user_id in table.index else None
-            store.add(build_card(ds, req, image_facts, frow))
+            store.add(build_card(ds, req, image_facts, frow, cfg=cfg))
         store.built_in_s = round(time.perf_counter() - t0, 2)
         return store
 

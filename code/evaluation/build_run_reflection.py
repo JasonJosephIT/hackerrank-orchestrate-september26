@@ -1,4 +1,4 @@
-"""Build evaluation/run_reflection.md from the last full run's traces and transcripts (D17).
+"""Build evaluation/run_reflection.md from the last full run's traces and transcripts (D19).
 
     python3 code/evaluation/build_run_reflection.py [.cache/traces.jsonl] [.cache/agent_transcripts.jsonl]
 """

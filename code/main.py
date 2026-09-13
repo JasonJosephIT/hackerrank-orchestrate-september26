@@ -6,7 +6,7 @@
     python3 code/main.py --explain request_42   # print the agent transcript, decision packet + score report for one request
     python3 code/main.py --pipeline     # legacy linear pipeline instead of the orchestrator (same columns)
 
-Default runtime (D13): an orchestrator per request sets a goal from the request and the user's criteria, plans which
+Default runtime (D15): an orchestrator per request sets a goal from the request and the user's criteria, plans which
 tools its workers (historian, forecaster, planner, scorer, auditor, explainer) run, executes them over the user's
 memory, reflects on the outcome against the goal and re-plans on an audit failure. Every tool wraps the deterministic
 engine (intake -> forecast -> plans -> score -> verify), so the contract columns are identical to `--pipeline`.
@@ -34,6 +34,7 @@ from buyorwait.explain import decision_packet, llm_explanation, template_explana
 from buyorwait.forecast import projection  # noqa: E402
 from buyorwait.intake import Dataset, build_state  # noqa: E402
 from buyorwait.plans import decide, request_from_row  # noqa: E402
+from buyorwait.profile import account_profile, load_cache, save_cache  # noqa: E402
 from buyorwait.render import render_row  # noqa: E402,F401  (re-exported for tests)
 from buyorwait.score import expense_impact, spending_score  # noqa: E402
 from buyorwait.verify import COLUMNS, load_context, verify_rows  # noqa: E402
@@ -50,17 +51,25 @@ def _load_env():
                 os.environ.setdefault(k.strip(), v.strip())
 
 
-def run_one_pipeline(ds, facts, row, use_llm: bool, tracer, client=None):
+def run_one_pipeline(ds, facts, row, use_llm: bool, tracer, client=None, cfg: dict | None = None,
+                     profile_cache: dict | None = None, use_profile: bool = True, refresh_profiles: bool = False):
     """Legacy linear pipeline (kept as the parity oracle for the orchestrator)."""
     req = request_from_row(row)
     with tracer.span("buyorwait.request", request_id=req.request_id, user_id=req.user_id,
                      request_type=req.request_type, requested_amount=req.amount) as root:
         with tracer.span("intake"):
-            state = build_state(ds, req.user_id, req.request_date, facts, request_id=req.request_id)
+            state = build_state(ds, req.user_id, req.request_date, facts, cfg=cfg, request_id=req.request_id)
         with tracer.span("forecast+plans") as sp:
             dec = decide(ds, state, req)
             sp.set(amount_safe_to_pay=dec.safe_today, earliest=str(dec.earliest), status=dec.status, method=dec.method,
                    plan_candidates=len(dec.candidates))
+        with tracer.span("profile") as sp:   # D14: account archetype + capped income-reliability supplement
+            state.profile, pusage = account_profile(state, client=client, cache=profile_cache,
+                                                    use_llm=use_llm and use_profile, refresh=refresh_profiles)
+            sp.set(archetype=state.profile["archetype"], adjustment=state.profile["adjustment"], source=state.profile["source"],
+                   cache_hit=bool(pusage.get("cache_hit")))
+            if use_llm and use_profile and not pusage.get("cache_hit"):
+                sp.set_genai("groq", pusage, fallback_used=state.profile["source"] != "llm")
         with tracer.span("score"):
             score = spending_score(state)
             impact = expense_impact(state, dec)
@@ -71,6 +80,7 @@ def run_one_pipeline(ds, facts, row, use_llm: bool, tracer, client=None):
             overrides = {c.event_id: c.new_amount for c in dec.plan.changes if c.kind == "reduce_to"}
             min_proj = round(min(low for _, _, low in projection(state, extra=extra, exclude=exclude, overrides=overrides)), 2)
         packet = decision_packet(dec, min_proj, {"spending_score": score, "expense_impact": impact})
+        packet["account_profile"] = {k: state.profile.get(k) for k in ("archetype", "adjustment", "confidence", "rationale", "evidence_ids", "source")}
         explanation, usage = None, {}
         if use_llm:
             with tracer.span("explain") as sp:
@@ -108,12 +118,11 @@ def _rows(disk: DiskTables, samples: bool):
     return df
 
 
-def _cards(ds, facts, rows_in, mode: str, rebuild: bool):
-    """Account cards (D14): load the cached store when it covers every request, else load the dataset once,
-    build and save it. Returns (store, dataset-or-None)."""
-    path = ROOT / ".cache" / ("cards.jsonl" if mode in ("full", "partial") else f"cards_{mode}.jsonl")
-    if mode == "explain":
-        path = ROOT / ".cache" / "cards.jsonl"
+def _cards(ds, facts, rows_in, mode: str, rebuild: bool, cfg: dict | None = None):
+    """Account cards (D16): load the cached store when it covers every request, else load the dataset once,
+    build and save it. Returns (store, dataset-or-None). Conservative mode (D13) builds and caches its own cards."""
+    suffix = "_conservative" if cfg and cfg.get("conservative_income") else ""
+    path = ROOT / ".cache" / (f"cards{suffix}.jsonl" if mode in ("full", "partial", "explain") else f"cards_{mode}{suffix}.jsonl")
     need = {r.request_id for r in rows_in.itertuples(index=False)}
     if path.exists() and not rebuild:
         try:
@@ -125,7 +134,7 @@ def _cards(ds, facts, rows_in, mode: str, rebuild: bool):
             print(f"cards: cache unusable ({e}); rebuilding", file=sys.stderr)
     ds = ds or Dataset.load(DATASET)
     rows = list(ds.requests.itertuples(index=False)) + list(ds.samples.itertuples(index=False)) if mode != "samples" else list(rows_in.itertuples(index=False))
-    store = CardStore.build(ds, facts, rows)
+    store = CardStore.build(ds, facts, rows, cfg=cfg)
     size = store.save(path)
     st = store.stats()
     print(f"cards: built {st['cards']} in {st['built_in_s']}s ({size / 1e3:.0f} KB, avg {st['avg_streams']} streams/user) -> {path.relative_to(ROOT)}",
@@ -152,6 +161,12 @@ def main() -> int:
     ap.add_argument("--build-cards", action="store_true", help="rebuild the account cards (.cache/cards*.jsonl) even if present")
     ap.add_argument("--no-cards", action="store_true", help="serve requests from the dataset instead of account cards")
     ap.add_argument("--load-dataset", action="store_true", help="keep the full dataset in RAM at request time (default: cards in RAM, tables on disk)")
+    ap.add_argument("--no-profile", action="store_true", help="skip the LLM account-profile stage (rules baseline, adjustment 0)")
+    ap.add_argument("--refresh-profiles", action="store_true", help="ignore code/evidence/account_profiles.json and re-query every profile")
+    ap.add_argument("--profiles-only", action="store_true",
+                    help="build/refresh the account-profile cache for the selected rows and exit; writes no output.csv")
+    ap.add_argument("--conservative", action="store_true",
+                    help="irregular-income safety levers (income haircut + reserve cushion); also BUYORWAIT_CONSERVATIVE=1")
     args = ap.parse_args()
     _load_env()
 
@@ -166,6 +181,8 @@ def main() -> int:
             rows_in = rows_in[rows_in.request_id == args.explain]
     if args.limit:
         rows_in = rows_in.head(args.limit)
+    conservative = args.conservative or os.environ.get("BUYORWAIT_CONSERVATIVE", "0") not in ("", "0", "false", "no")
+    cfg = {"conservative_income": True} if conservative else None
     use_llm = not args.no_llm and bool(os.environ.get("GROQ_API_KEY"))
     if not use_llm and not args.no_llm:
         print("GROQ_API_KEY not set: using template explanations", file=sys.stderr)
@@ -180,17 +197,36 @@ def main() -> int:
         client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
     requests_file = "sample_requests.csv" if args.samples else "requests.csv"
+    profile_cache = load_cache() if use_llm and not args.no_profile else None
+    if args.profiles_only:
+        if profile_cache is None:
+            print("--profiles-only needs GROQ_API_KEY and no --no-llm/--no-profile", file=sys.stderr)
+            return 2
+        ds = Dataset.load(DATASET)
+        done = 0
+        for i, row in enumerate(rows_in.itertuples(index=False), 1):
+            req = request_from_row(row)
+            state = build_state(ds, req.user_id, req.request_date, facts, cfg=cfg, request_id=req.request_id)
+            prof, pusage = account_profile(state, client=client, cache=profile_cache, refresh=args.refresh_profiles)
+            done += prof["source"] == "llm"
+            if prof["source"] == "llm":
+                save_cache(profile_cache)
+            print(f"[{i}/{len(rows_in)}] {req.request_id} {req.user_id}: {prof['archetype']} {prof['adjustment']:+d} "
+                  f"({'cache' if pusage.get('cache_hit') else prof['source']}{'; ' + pusage['error'] if pusage.get('error') else ''})", file=sys.stderr)
+        print(f"profiles from the model: {done}/{len(rows_in)} -> {len(profile_cache)} cached", file=sys.stderr)
+        return 0
     orch = None
     if args.pipeline or args.no_cards or args.load_dataset:
         ds = Dataset.load(DATASET)
     if not args.pipeline:
         cards = None
         if not args.no_cards:
-            cards, ds = _cards(ds, facts, rows_in, mode, rebuild=args.build_cards)
+            cards, ds = _cards(ds, facts, rows_in, mode, rebuild=args.build_cards, cfg=cfg)
             if not args.load_dataset:
                 ds = None                        # request time: cards in RAM, tables on disk by section
         lt = LongTermMemory(ds, facts, verify_context=load_context(DATASET, requests_file), cards=cards, disk=disk,
-                            explanation_cache=_explanation_cache(Path(args.reuse_explanations)) if args.reuse_explanations else None)
+                            explanation_cache=_explanation_cache(Path(args.reuse_explanations)) if args.reuse_explanations else None,
+                            cfg=cfg, profile_cache=profile_cache, use_profile=not args.no_profile, refresh_profiles=args.refresh_profiles)
         if lt.explanation_cache:
             print(f"explanations: reusing {len(lt.explanation_cache) - 1} model-written explanation(s) from {args.reuse_explanations}", file=sys.stderr)
         print(f"memory: {'cards in RAM, tables on disk' if ds is None else 'cards + full dataset in RAM'}", file=sys.stderr)
@@ -204,12 +240,15 @@ def main() -> int:
     out_rows, packets, fallbacks, last_error = [], [], 0, None
     for i, row in enumerate(rows_in.itertuples(index=False), 1):
         if orch is None:
-            dec, out, packet, usage = run_one_pipeline(ds, facts, row, use_llm, tracer, client)
+            dec, out, packet, usage = run_one_pipeline(ds, facts, row, use_llm, tracer, client, cfg=cfg, profile_cache=profile_cache,
+                                                       use_profile=not args.no_profile, refresh_profiles=args.refresh_profiles)
             res = None
         else:
             dec, out, packet, usage, res = run_one(orch, row)
             if transcripts is not None:
                 transcripts.write(json.dumps(res.summary(), default=str) + "\n")
+        if profile_cache is not None and (packet.get("account_profile") or {}).get("source") == "llm":
+            save_cache(profile_cache)   # incremental: a crash or rate-limit stop keeps what was already classified
         out_rows.append(out)
         packets.append(packet)
         if use_llm and usage.get("error"):

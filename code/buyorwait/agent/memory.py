@@ -1,10 +1,10 @@
-"""Memory for the agentic runtime (docs/AGENTIC.md, D13).
+"""Memory for the agentic runtime (docs/AGENTIC.md, D15).
 
 Three tiers, all keyed to one user and one request:
 
-* long-term  — the account cards (`CardStore`, D14) held in RAM: one compact card per user as of the
+* long-term  — the account cards (`CardStore`, D16) held in RAM: one compact card per user as of the
                request date, built once by the deterministic intake + score layers. The raw tables stay
-               on disk (`DiskTables`, D15) and are read by section (one user's rows) only on a card miss
+               on disk (`DiskTables`, D17) and are read by section (one user's rows) only on a card miss
                or when a worker asks for raw rows.
 * episodic   — the user's card recalled *at request time* (or, without cards, `build_state` over the
                dataset): only this user's history, cut at `request_date`. Nothing from other users,
@@ -49,6 +49,10 @@ class LongTermMemory:
     cards: CardStore | None = None
     disk: DiskTables | None = None       # raw tables on disk, read by section on demand
     explanation_cache: dict | None = None   # request_id -> model-written explanation from an earlier run (--reuse-explanations)
+    cfg: dict | None = None                 # intake config (e.g. conservative mode, D13) used when a card must be built
+    profile_cache: dict | None = None       # account-profile cache (D14), code/evidence/account_profiles.json; None = no model profiles
+    use_profile: bool = True
+    refresh_profiles: bool = False
     _factors: Any = None      # pandas DataFrame from factors.account_factors, computed on first use
 
     def account_factors(self):
@@ -97,7 +101,7 @@ class UserMemory:
         card = lt.cards.get(self.request.user_id, self.request.request_date, self.request.request_id)
         if card is None and (lt.disk is not None or lt.ds is not None):
             src = lt.dataset_for(self.request.user_id, self.request.request_id)
-            card = build_card(src, self.request, lt.image_facts)
+            card = build_card(src, self.request, lt.image_facts, cfg=lt.cfg)
             lt.cards.add(card)
             self.put("card_built", "disk" if lt.ds is None else "dataset")
         return card
@@ -115,7 +119,7 @@ class UserMemory:
             if self.long_term.ds is None:
                 raise RuntimeError(f"no card for {self.request.user_id}@{self.request.request_date} and no dataset loaded")
             st = build_state(self.long_term.ds, self.request.user_id, self.request.request_date,
-                             self.long_term.image_facts, cfg={"use_messages": use_messages},
+                             self.long_term.image_facts, cfg={**(self.long_term.cfg or {}), "use_messages": use_messages},
                              request_id=self.request.request_id)
             self.put("recall_source", "dataset")
         if use_messages:
