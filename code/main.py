@@ -65,12 +65,12 @@ def render_row(dec, explanation: str) -> dict:
     }
 
 
-def run_one(ds, facts, row, use_llm: bool, tracer, client=None):
+def run_one(ds, facts, row, use_llm: bool, tracer, client=None, cfg: dict | None = None):
     req = request_from_row(row)
     with tracer.span("buyorwait.request", request_id=req.request_id, user_id=req.user_id,
                      request_type=req.request_type, requested_amount=req.amount) as root:
         with tracer.span("intake"):
-            state = build_state(ds, req.user_id, req.request_date, facts, request_id=req.request_id)
+            state = build_state(ds, req.user_id, req.request_date, facts, cfg=cfg, request_id=req.request_id)
         with tracer.span("forecast+plans") as sp:
             dec = decide(ds, state, req)
             sp.set(amount_safe_to_pay=dec.safe_today, earliest=str(dec.earliest), status=dec.status, method=dec.method,
@@ -102,6 +102,8 @@ def main() -> int:
     ap.add_argument("--no-llm", action="store_true", help="skip Groq; template explanations only")
     ap.add_argument("--explain", metavar="REQUEST_ID", help="print the decision packet for one request and exit")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--conservative", action="store_true",
+                    help="irregular-income safety levers (income haircut + reserve cushion); also BUYORWAIT_CONSERVATIVE=1")
     args = ap.parse_args()
     _load_env()
 
@@ -114,6 +116,8 @@ def main() -> int:
             rows_in = ds.samples[ds.samples.request_id == args.explain]
     if args.limit:
         rows_in = rows_in.head(args.limit)
+    conservative = args.conservative or os.environ.get("BUYORWAIT_CONSERVATIVE", "0") not in ("", "0", "false", "no")
+    cfg = {"conservative_income": True} if conservative else None
     use_llm = not args.no_llm and bool(os.environ.get("GROQ_API_KEY"))
     if not use_llm and not args.no_llm:
         print("GROQ_API_KEY not set: using template explanations", file=sys.stderr)
@@ -129,7 +133,7 @@ def main() -> int:
 
     out_rows, packets, fallbacks, last_error = [], [], 0, None
     for i, row in enumerate(rows_in.itertuples(index=False), 1):
-        dec, out, packet, usage = run_one(ds, facts, row, use_llm, tracer, client)
+        dec, out, packet, usage = run_one(ds, facts, row, use_llm, tracer, client, cfg=cfg)
         out_rows.append(out)
         packets.append(packet)
         if use_llm and usage.get("error"):

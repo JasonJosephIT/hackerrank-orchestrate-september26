@@ -18,6 +18,7 @@ Python 3.11+. Secrets are read from environment variables (or the gitignored `.e
 ```bash
 python3 code/main.py                 # dataset/requests.csv -> ./output.csv  (LLM explanations if GROQ_API_KEY is set)
 python3 code/main.py --no-llm        # same, template explanations only (no network)
+python3 code/main.py --conservative  # irregular-income safety levers: income haircut + reserve cushion (D13; or BUYORWAIT_CONSERVATIVE=1)
 python3 code/main.py --samples       # dataset/sample_requests.csv -> code/evaluation/sample_output.csv
 python3 code/evaluation/score_samples.py          # per-field match against the 25 solved samples
 python3 code/buyorwait/verify.py output.csv       # standalone contract validator (also runs inside main.py)

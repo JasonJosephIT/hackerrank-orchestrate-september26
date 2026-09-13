@@ -87,7 +87,7 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
     fixed_m += sum(-a for _, a, _ in (extra or []) if a < 0) * 30.0 / horizon_days
     absorbed = sorted(((established(r), r) for r in fixed_recs if established(r) >= 0.5), key=lambda t: -t[0])
     essential_m = sum(r.amount * (30.0 / (r.cadence_days or 30)) for r in state.recurring if r.direction == "debit" and r.protected) or outflow_m
-    headroom = trough - state.minimum
+    headroom = trough - state.floor   # floor = minimum + conservative reserve (D13); equals minimum unless the flag is on
     runway_months = headroom / essential_m if essential_m > 0 else 3.0
     liquidity = _clip(runway_months / 3.0 * 100)                       # 3 months of essentials = 100
     commitment = _clip(100 * (1 - fixed_m / trusted_m)) if trusted_m > 0 else 0.0
@@ -150,7 +150,7 @@ def expense_impact(state: FinancialState, dec) -> dict:
     delta = {k: round(after[k] - before[k], 1) for k in WEIGHTS}
     headroom = max(before["_headroom"], 1e-9)
     hurt = _clip(100 * dec.request.amount / headroom) if before["_headroom"] > 0 else 100.0
-    band = "fine" if after["_trough"] >= state.minimum and hurt < 50 else ("caution" if after["_trough"] >= state.minimum else "unsafe")
+    band = "fine" if after["_trough"] >= state.floor and hurt < 50 else ("caution" if after["_trough"] >= state.floor else "unsafe")
     drivers = sorted(delta.items(), key=lambda kv: kv[1])[:2]
     return {"composite_before": composite(before), "composite_after": composite(after), "delta": delta,
             "hurt": round(hurt, 1), "band": band, "top_drivers": [k for k, _ in drivers],

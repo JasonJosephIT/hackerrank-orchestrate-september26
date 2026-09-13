@@ -66,12 +66,12 @@ def trough(proj: list[tuple[date, float, float]], start: date | None = None) -> 
 
 def is_safe(state: FinancialState, payments: list[tuple[date, float]], **kw) -> bool:
     extra = [(d, -a, "plan") for d, a in payments]
-    return trough(projection(state, extra=extra, **kw)) >= state.minimum - 1e-9
+    return trough(projection(state, extra=extra, **kw)) >= state.floor - 1e-9
 
 
 def amount_safe_today(state: FinancialState, requested: float, **kw) -> float:
-    """Largest amount payable on request_date keeping every projected balance >= minimum."""
-    safe = trough(projection(state, **kw)) - state.minimum
+    """Largest amount payable on request_date keeping every projected balance >= minimum (+ conservative reserve)."""
+    safe = trough(projection(state, **kw)) - state.floor
     return max(0.0, min(requested, round(safe, 2)))
 
 
@@ -88,6 +88,6 @@ def earliest_full_payment_date(state: FinancialState, amount: float, **kw) -> da
         suffix_low[d] = m          # min low strictly after d
         m = min(m, low)
     for d, end_bal, _ in proj:
-        if min(end_bal, suffix_low[d]) - amount >= state.minimum - 1e-9:
+        if min(end_bal, suffix_low[d]) - amount >= state.floor - 1e-9:
             return d
     return None

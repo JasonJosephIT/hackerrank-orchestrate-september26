@@ -36,7 +36,8 @@ def decision_packet(dec: Decision, min_projected: float | None = None, score: di
     return {
         "request_id": req.request_id, "request_type": req.request_type, "currency": st.currency,
         "requested_amount": req.amount, "request_date": str(req.request_date), "deadline": str(req.deadline),
-        "balance": st.balance, "minimum_balance": st.minimum, "amount_safe_to_pay": dec.safe_today,
+        "balance": st.balance, "minimum_balance": st.minimum, "conservative_reserve": st.reserve or None,
+        "irregular_income": st.irregular_income, "amount_safe_to_pay": dec.safe_today,
         "earliest_full_payment": str(dec.earliest) if dec.earliest else None,
         "status": dec.status, "method": dec.method,
         "payment_plan": [(str(d), a) for d, a in (p.payments if p else [])],
