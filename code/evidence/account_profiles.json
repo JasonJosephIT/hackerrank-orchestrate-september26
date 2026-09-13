@@ -2999,25 +2999,27 @@
   "adjustment": 0,
   "archetype": "salaried",
   "baseline_archetype": "salaried",
-  "confidence": 0.95,
-  "evidence_ids": [],
-  "features_hash": "6aebbd0fabc26aef",
-  "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll credit with no variability.",
+  "confidence": 0.98,
+  "evidence_ids": [
+   "event_4447"
+  ],
+  "features_hash": "e12f1aaabd9d85d5",
+  "model": "openai/gpt-oss-120b",
+  "rationale": "Consistent payroll credits with zero variability indicate a regular salary.",
   "source": "llm"
  },
  "user_49@2024-03-04": {
-  "adjustment": 0,
+  "adjustment": -1,
   "archetype": "salaried",
   "baseline_archetype": "salaried",
-  "confidence": 0.8,
+  "confidence": 0.93,
   "evidence_ids": [
    "event_4564",
    "message_36"
   ],
-  "features_hash": "2e89ae2f793429c5",
-  "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with a temporary lower amount, still a stable salary stream.",
+  "features_hash": "576df3767f75ac9d",
+  "model": "openai/gpt-oss-120b",
+  "rationale": "Regular payroll with noted temporary lower salary suggests a slight downtrend",
   "source": "llm"
  },
  "user_50@2025-08-06": {
@@ -3169,15 +3171,15 @@
  },
  "user_61@2024-03-03": {
   "adjustment": -2,
-  "archetype": "no_income",
+  "archetype": "transition",
   "baseline_archetype": "transition",
-  "confidence": 0.8,
+  "confidence": 0.9,
   "evidence_ids": [
    "message_45"
   ],
-  "features_hash": "c1ae6f8db16b354d",
-  "model": "openai/gpt-oss-20b",
-  "rationale": "Employment ended, no salary forecast, no other income streams.",
+  "features_hash": "d54b5ec81fe7c24a",
+  "model": "openai/gpt-oss-120b",
+  "rationale": "Employment ended with no confirmed replacement, indicating a loss of stable income",
   "source": "llm"
  },
  "user_62@2025-08-05": {
