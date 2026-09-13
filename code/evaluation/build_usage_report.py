@@ -18,6 +18,7 @@ PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing (console
     "allam-2-7b": (0.0, 0.0),           # POC model (D9): no public list price found on 2026-09-12; reported at 0 until confirmed
     "openai/gpt-oss-120b": (0.15, 0.60),
     "openai/gpt-oss-20b": (0.10, 0.50),
+    "qwen/qwen3.8-27b": (0.29, 0.59),   # no public list price found on 2026-09-13; priced at the Qwen3 32B rate as an upper bound
     "llama-3.3-70b-versatile": (0.59, 0.79),
     "meta-llama/llama-4-scout-17b-16e-instruct": (0.11, 0.34),
 }
