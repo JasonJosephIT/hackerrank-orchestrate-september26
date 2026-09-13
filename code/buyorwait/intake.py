@@ -142,6 +142,7 @@ class FinancialState:
     events: pd.DataFrame
     reserve: float = 0.0           # conservative-mode cushion above `minimum` (D13); 0 unless irregular income
     irregular_income: bool = False
+    profile: dict | None = None    # account profile (D14): archetype + capped adjustment; score/explain layer only
 
     @property
     def floor(self) -> float:

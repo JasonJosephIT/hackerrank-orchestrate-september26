@@ -19,6 +19,8 @@ Python 3.11+. Secrets are read from environment variables (or the gitignored `.e
 python3 code/main.py                 # dataset/requests.csv -> ./output.csv  (LLM explanations if GROQ_API_KEY is set)
 python3 code/main.py --no-llm        # same, template explanations only (no network)
 python3 code/main.py --conservative  # irregular-income safety levers: income haircut + reserve cushion (D13; or BUYORWAIT_CONSERVATIVE=1)
+python3 code/main.py --no-profile    # skip the LLM account-profile stage (rules-only archetype, no score supplement)
+python3 code/main.py --refresh-profiles   # re-query every account profile instead of reading code/evidence/account_profiles.json
 python3 code/main.py --samples       # dataset/sample_requests.csv -> code/evaluation/sample_output.csv
 python3 code/evaluation/score_samples.py          # per-field match against the 25 solved samples
 python3 code/buyorwait/verify.py output.csv       # standalone contract validator (also runs inside main.py)
@@ -37,7 +39,8 @@ dataset/*.csv ──► intake.py    join, dated FX, status rules, recurrence + 
                   evidence.py  messages: 30 regex templates (EN + Indonesian) -> typed facts; images: cached amounts
               ──► forecast.py  84-day balance path, amount_safe_to_pay, earliest_date_for_full_payment
               ──► plans.py     full / partial / installments / wait / spending-change variants, eligibility, 6-rule ranking
-              ──► score.py     Spending Score (7 arithmetic components) + Expense Impact delta
+              ──► profile.py   account profile (D14): typed income features -> rules archetype -> Groq JSON (archetype, ±2 adjustment, evidence ids), cached per user
+              ──► score.py     Spending Score (7 arithmetic components, income_reliability ± profile supplement) + Expense Impact delta
               ──► verify.py    independent contract validator (bounds, enums, plan formats, option match, flexible-only changes)
               ──► explain.py   Groq openai/gpt-oss-120b (BUYORWAIT_EXPLAIN_MODEL overrides) writes decision_explanation from the decision packet (template fallback, 429 backoff)
               ──► telemetry.py OpenTelemetry: one trace per request, stage spans, gen_ai.* attributes -> .cache/traces.jsonl
@@ -49,6 +52,7 @@ Key rules (details and evidence in D6):
 - **Recurrence** is detected per category from settled history (cadence = median gap, amount = history mean; constant items keep their value). Pending debits are reserved on their settlement date; pending credits, failed/cancelled rows and unrealized valuations are ignored; scheduled rows count on their date.
 - **Income** recurs only when it is a regular salary (stable amount, monthly) or an explicitly confirmed stream (scheduled row, employer message). Final payroll, ended contracts and platform payouts marked pending stop the forecast.
 - **Messages and images are untrusted data.** Only narrow, validated facts are extracted (amounts, dates, percentages, event ids); embedded instructions are ignored. The 16 blank-amount events are filled from `code/evidence/image_facts.json`, extracted once with a vision pass and hand-verified.
+- **Account profile (D14).** One model call per user classifies the earner (salaried, salaried plus side income, freelance, gig, mixed household, transition, no income) from a typed packet: income streams with cadence and variability, one-off and pending credits, the typed message facts, never raw message text. The answer is validated against a closed schema (archetype enum, adjustment in -2..2, evidence ids that were in the packet) and cached; it moves `income_reliability` by at most ±10 points and gives the explanation its income sentence. It never touches a contract column.
 - **Plans** are ranked by: completes by the deadline → no spending changes → lowest total paid → earlier start → fewer payments → lowest `payment_option_id`. Installments must match a supplied option and `number_of_payments ≤ max_installment_months`; partial payment follows the two-payment rule exactly; spending changes touch only flexible, non-protected events in categories the user permits (reduce to `minimum_allowed_amount`, otherwise stop), smallest saving first, at most three.
 
 ## Files
@@ -57,6 +61,7 @@ Key rules (details and evidence in D6):
 code/main.py                      entry point
 code/buyorwait/                   engine modules (see above)
 code/evidence/image_facts.json    cached image extractions (event_id -> amount, field, confidence)
+code/evidence/account_profiles.json  cached account profiles (user@request_date -> archetype, adjustment, rationale, evidence ids)
 code/evaluation/score_samples.py  sample scorer
 code/evaluation/build_usage_report.py, usage_report.md   token usage + cost of the final run
 tests/                            pytest suite (contract, forecast, evidence, sample regression)

@@ -47,8 +47,10 @@ def main(path: Path) -> int:
              f"Run recorded in `{path.name}`: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · "
              f"{len(requests)} requests processed (OpenTelemetry spans, `gen_ai.*` attributes). "
              f"`python3 code/main.py` writes this file only on a full run; `--samples`, `--explain` and `--limit` use separate trace files.", "",
-             "The deterministic engine (intake, forecast, plans, verification) makes no model calls. The LLM writes "
-             "`decision_explanation` only; a template fallback is used when a call fails, so fallbacks are listed too.", "",
+             "The deterministic engine (intake, forecast, plans, verification) makes no model calls. The LLM is called "
+             "twice per request: once for the account profile (D14: archetype + a capped income-reliability supplement, "
+             "score/explanation layer only, cached in `code/evidence/account_profiles.json` so a cache hit makes no call) "
+             "and once to write `decision_explanation`. Fallbacks (rules baseline / template) are listed too.", "",
              "| Provider | Model | Calls | Input tokens | Output tokens | Total tokens | Est. cost (USD) | Fallbacks |",
              "|---|---|---|---|---|---|---|---|"]
     tot = {"calls": 0, "input": 0, "output": 0, "cost": 0.0, "fallbacks": 0}

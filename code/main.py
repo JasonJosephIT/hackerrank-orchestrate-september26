@@ -27,6 +27,7 @@ from buyorwait.forecast import projection  # noqa: E402
 from buyorwait.formatting import fmt_amount, fmt_plain  # noqa: E402
 from buyorwait.intake import Dataset, build_state  # noqa: E402
 from buyorwait.plans import decide, request_from_row  # noqa: E402
+from buyorwait.profile import account_profile, load_cache, save_cache  # noqa: E402
 from buyorwait.score import expense_impact, spending_score  # noqa: E402
 from buyorwait.verify import COLUMNS, load_context, verify_rows  # noqa: E402
 
@@ -65,7 +66,8 @@ def render_row(dec, explanation: str) -> dict:
     }
 
 
-def run_one(ds, facts, row, use_llm: bool, tracer, client=None, cfg: dict | None = None):
+def run_one(ds, facts, row, use_llm: bool, tracer, client=None, cfg: dict | None = None,
+            profile_cache: dict | None = None, use_profile: bool = True, refresh_profiles: bool = False):
     req = request_from_row(row)
     with tracer.span("buyorwait.request", request_id=req.request_id, user_id=req.user_id,
                      request_type=req.request_type, requested_amount=req.amount) as root:
@@ -75,6 +77,13 @@ def run_one(ds, facts, row, use_llm: bool, tracer, client=None, cfg: dict | None
             dec = decide(ds, state, req)
             sp.set(amount_safe_to_pay=dec.safe_today, earliest=str(dec.earliest), status=dec.status, method=dec.method,
                    plan_candidates=len(dec.candidates))
+        with tracer.span("profile") as sp:   # D14: account archetype + capped income-reliability supplement
+            state.profile, pusage = account_profile(state, client=client, cache=profile_cache,
+                                                    use_llm=use_llm and use_profile, refresh=refresh_profiles)
+            sp.set(archetype=state.profile["archetype"], adjustment=state.profile["adjustment"], source=state.profile["source"],
+                   cache_hit=bool(pusage.get("cache_hit")))
+            if use_llm and use_profile and not pusage.get("cache_hit"):
+                sp.set_genai("groq", pusage, fallback_used=state.profile["source"] != "llm")
         with tracer.span("score"):
             score = spending_score(state)
             impact = expense_impact(state, dec)
@@ -85,6 +94,7 @@ def run_one(ds, facts, row, use_llm: bool, tracer, client=None, cfg: dict | None
             overrides = {c.event_id: c.new_amount for c in dec.plan.changes if c.kind == "reduce_to"}
             min_proj = round(min(low for _, _, low in projection(state, extra=extra, exclude=exclude, overrides=overrides)), 2)
         packet = decision_packet(dec, min_proj, {"spending_score": score, "expense_impact": impact})
+        packet["account_profile"] = {k: state.profile.get(k) for k in ("archetype", "adjustment", "confidence", "rationale", "evidence_ids", "source")}
         explanation, usage = None, {}
         if use_llm:
             with tracer.span("explain") as sp:
@@ -102,6 +112,10 @@ def main() -> int:
     ap.add_argument("--no-llm", action="store_true", help="skip Groq; template explanations only")
     ap.add_argument("--explain", metavar="REQUEST_ID", help="print the decision packet for one request and exit")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--no-profile", action="store_true", help="skip the LLM account-profile stage (rules baseline, adjustment 0)")
+    ap.add_argument("--refresh-profiles", action="store_true", help="ignore code/evidence/account_profiles.json and re-query every profile")
+    ap.add_argument("--profiles-only", action="store_true",
+                    help="build/refresh the account-profile cache for the selected rows and exit; writes no output.csv")
     ap.add_argument("--conservative", action="store_true",
                     help="irregular-income safety levers (income haircut + reserve cushion); also BUYORWAIT_CONSERVATIVE=1")
     args = ap.parse_args()
@@ -131,9 +145,29 @@ def main() -> int:
         from groq import Groq
         client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
+    profile_cache = load_cache() if use_llm and not args.no_profile else None
+    if args.profiles_only:
+        if profile_cache is None:
+            print("--profiles-only needs GROQ_API_KEY and no --no-llm/--no-profile", file=sys.stderr)
+            return 2
+        done = 0
+        for i, row in enumerate(rows_in.itertuples(index=False), 1):
+            req = request_from_row(row)
+            state = build_state(ds, req.user_id, req.request_date, facts, cfg=cfg, request_id=req.request_id)
+            prof, pusage = account_profile(state, client=client, cache=profile_cache, refresh=args.refresh_profiles)
+            done += prof["source"] == "llm"
+            if prof["source"] == "llm":
+                save_cache(profile_cache)
+            print(f"[{i}/{len(rows_in)}] {req.request_id} {req.user_id}: {prof['archetype']} {prof['adjustment']:+d} "
+                  f"({'cache' if pusage.get('cache_hit') else prof['source']}{'; ' + pusage['error'] if pusage.get('error') else ''})", file=sys.stderr)
+        print(f"profiles from the model: {done}/{len(rows_in)} -> {len(profile_cache)} cached", file=sys.stderr)
+        return 0
     out_rows, packets, fallbacks, last_error = [], [], 0, None
     for i, row in enumerate(rows_in.itertuples(index=False), 1):
-        dec, out, packet, usage = run_one(ds, facts, row, use_llm, tracer, client, cfg=cfg)
+        dec, out, packet, usage = run_one(ds, facts, row, use_llm, tracer, client, cfg=cfg, profile_cache=profile_cache,
+                                          use_profile=not args.no_profile, refresh_profiles=args.refresh_profiles)
+        if profile_cache is not None and packet["account_profile"]["source"] == "llm":
+            save_cache(profile_cache)   # incremental: a crash or rate-limit stop keeps what was already classified
         out_rows.append(out)
         packets.append(packet)
         if use_llm and usage.get("error"):

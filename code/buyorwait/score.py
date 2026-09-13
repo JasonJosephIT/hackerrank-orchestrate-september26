@@ -22,6 +22,7 @@ ABSORPTION = True
 TAU = 3.0            # months of history at which a stream is 63% "established" (1 - e^-1)
 LAMBDA = 0.6         # an established expense keeps a 40% floor weight: the cash still leaves
 MESSAGE_SEED = 0.25  # trust given to an income increase confirmed only by a message / scheduled row
+PROFILE_POINTS = 5.0  # D14: income_reliability points per account-profile adjustment step (adjustment is -2..2, so ±10 max)
 
 
 def established(r) -> float:
@@ -116,6 +117,9 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
         reliability = 100.0 if stable else 60.0
         if any("pending" in n or "not forecast" in n for n in state.notes):
             reliability -= 20
+    if state.profile and state.profile.get("adjustment"):
+        # D14: the account-profile supplement, ±2 steps of PROFILE_POINTS, on top of the arithmetic
+        reliability += PROFILE_POINTS * max(-2, min(2, int(state.profile["adjustment"])))
     reliability = _clip(reliability)
     savings = _clip(100 * (trusted_m - outflow_m) / trusted_m) if trusted_m > 0 else 0.0
     return {"liquidity_buffer": round(liquidity, 1), "commitment_load": round(commitment, 1),
@@ -124,7 +128,8 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
             "_trough": round(trough, 2), "_headroom": round(headroom, 2), "_monthly_income": round(income_m, 2),
             "_trusted_income": round(trusted_m, 2), "_monthly_outflow": round(outflow_m, 2),
             "_absorbed": [{"stream": r.description or r.key, "established": round(e, 2)} for e, r in absorbed[:3]],
-            "_income_detail": income_detail}
+            "_income_detail": income_detail,
+            "_profile": {k: state.profile.get(k) for k in ("archetype", "adjustment", "rationale", "source")} if state.profile else None}
 
 
 def composite(c: dict) -> float:
