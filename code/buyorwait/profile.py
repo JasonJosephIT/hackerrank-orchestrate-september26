@@ -179,9 +179,15 @@ def save_cache(cache: dict, path: Path = CACHE_PATH) -> None:
 def account_profile(state: FinancialState, client=None, cache: dict | None = None, use_llm: bool = True,
                     refresh: bool = False) -> tuple[dict, dict]:
     """(profile, usage). profile always has archetype/adjustment/source; usage carries model + tokens for telemetry."""
-    f = profile_features(state)
+    return profile_from_features(profile_features(state), f"{state.user_id}@{state.request_date}", client=client,
+                                 cache=cache, use_llm=use_llm, refresh=refresh)
+
+
+def profile_from_features(f: dict, key: str, client=None, cache: dict | None = None, use_llm: bool = True,
+                          refresh: bool = False) -> tuple[dict, dict]:
+    """Same as `account_profile` from an already-built features packet (an account card carries one, D16),
+    so request time needs neither the raw events nor the dataset."""
     base = deterministic_archetype(f)
-    key = f"{state.user_id}@{state.request_date}"
     h = _features_hash(f)
     profile = {"archetype": base, "adjustment": 0, "confidence": None, "rationale": None, "evidence_ids": [],
                "baseline_archetype": base, "source": "rules", "features_hash": h}
