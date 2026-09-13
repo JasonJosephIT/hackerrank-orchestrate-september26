@@ -2955,17 +2955,17 @@
   "source": "llm"
  },
  "user_45@2026-07-06": {
-  "adjustment": 0,
+  "adjustment": 1,
   "archetype": "salaried",
   "baseline_archetype": "salaried",
-  "confidence": 0.9,
+  "confidence": 0.97,
   "evidence_ids": [
    "event_4139",
    "message_33"
   ],
-  "features_hash": "8973d11e9dc5fa83",
-  "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with confirmed salary increase.",
+  "features_hash": "cdcf2c7a98c28afc",
+  "model": "openai/gpt-oss-120b",
+  "rationale": "Regular payroll with confirmed upcoming raise",
   "source": "llm"
  },
  "user_46@2024-12-03": {
@@ -2986,13 +2986,13 @@
   "adjustment": -2,
   "archetype": "transition",
   "baseline_archetype": "transition",
-  "confidence": 0.3,
+  "confidence": 0.8,
   "evidence_ids": [
    "message_34"
   ],
-  "features_hash": "fb17063845e6d9c9",
-  "model": "openai/gpt-oss-20b",
-  "rationale": "Unconfirmed pending payout indicates uncertain income.",
+  "features_hash": "20c3ebd83be5d08d",
+  "model": "openai/gpt-oss-120b",
+  "rationale": "Only pending, unconfirmed platform payouts with no settled income",
   "source": "llm"
  },
  "user_48@2026-07-25": {
