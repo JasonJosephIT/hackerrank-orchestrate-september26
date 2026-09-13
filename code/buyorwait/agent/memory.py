@@ -48,6 +48,7 @@ class LongTermMemory:
     verify_context: dict | None = None   # verify.load_context(...) for the auditor
     cards: CardStore | None = None
     disk: DiskTables | None = None       # raw tables on disk, read by section on demand
+    explanation_cache: dict | None = None   # request_id -> model-written explanation from an earlier run (--reuse-explanations)
     _factors: Any = None      # pandas DataFrame from factors.account_factors, computed on first use
 
     def account_factors(self):

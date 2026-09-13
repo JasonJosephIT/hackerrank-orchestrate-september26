@@ -28,7 +28,7 @@ STAGES = {"explain": "decision_explanation (explainer worker)", "agent.plan": "o
 PRICE_NOTE = "; ".join(f"{m} ${pi:.2f} in / ${po:.2f} out" for m, (pi, po) in PRICES.items())
 
 
-def main(path: Path) -> int:
+def main(path: Path, note: str | None = None) -> int:
     spans = [json.loads(l) for l in path.open(encoding="utf-8")] if path.exists() else []
     requests = {s["trace_id"] for s in spans if s["name"] == "buyorwait.request"}
     per_model = defaultdict(lambda: {"calls": 0, "input": 0, "output": 0, "fallbacks": 0, "provider": "?"})
@@ -84,6 +84,8 @@ def main(path: Path) -> int:
               f"Prices: Groq list prices per 1M tokens — {PRICE_NOTE}. The 16 image amounts were extracted once into "
               "`code/evidence/image_facts.json` (vision pass, hand-verified) and are read from that cache during the run, "
               "so they add no per-run tokens.", ""]
+    if note:
+        lines += ["## Run note", "", note, ""]
     out = ROOT / "code" / "evaluation" / "usage_report.md"
     out.write_text("\n".join(lines), encoding="utf-8")
     print(out)
@@ -92,4 +94,6 @@ def main(path: Path) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / ".cache" / "traces.jsonl"))
+    p = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / ".cache" / "traces.jsonl"
+    n = sys.argv[2] if len(sys.argv) > 2 else None
+    sys.exit(main(p, n))

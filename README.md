@@ -28,6 +28,7 @@ python3 code/main.py --planner llm --llm-reflect  # opt-in: Groq proposes the to
 python3 code/main.py --pipeline                   # legacy linear pipeline (same contract columns; parity oracle in tests)
 python3 code/main.py --build-cards                # rebuild .cache/cards.jsonl (loads the dataset once, then drops it)
 python3 code/main.py --load-dataset               # keep the full tables in RAM at request time (default: cards in RAM, tables on disk by section)
+python3 code/main.py --reuse-explanations .cache/agent_transcripts.jsonl   # reuse an earlier run's model explanations (re-verified), e.g. after a quota cut-off
 python3 -m pytest -q tests                        # unit + regression tests
 python3 code/package.py                           # build code.zip for submission (no dataset, secrets or caches)
 ```

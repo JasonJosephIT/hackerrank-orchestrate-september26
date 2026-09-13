@@ -82,6 +82,22 @@ def run_one_pipeline(ds, facts, row, use_llm: bool, tracer, client=None):
     return dec, render_row(dec, explanation), packet, usage
 
 
+def _explanation_cache(path: Path) -> dict:
+    """request_id -> explanation for rows of an earlier transcript whose explanation came from the model (not the template)."""
+    out, model = {}, None
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            try:
+                t = json.loads(line)
+            except json.JSONDecodeError:
+                continue                      # a partial last line from an interrupted run
+            led = [e for e in t.get("ledger", []) if e.get("tool") == "write_explanation"]
+            if led and str(led[-1].get("summary", "")).startswith("LLM") and t.get("row", {}).get("decision_explanation"):
+                out[t["request_id"]] = t["row"]["decision_explanation"]
+    out["__model__"] = os.environ.get("BUYORWAIT_EXPLAIN_MODEL", "openai/gpt-oss-120b")
+    return out
+
+
 def _rows(disk: DiskTables, samples: bool):
     """The request rows for this run, read once from disk (250 or 25 small rows)."""
     import pandas as pd
@@ -132,6 +148,7 @@ def main() -> int:
     ap.add_argument("--pipeline", action="store_true", help="legacy linear pipeline instead of the orchestrator")
     ap.add_argument("--planner", choices=["rules", "llm"], default=None, help="orchestrator planner (default: BUYORWAIT_AGENT_PLANNER or rules)")
     ap.add_argument("--llm-reflect", action="store_true", help="add a model critique to the orchestrator's reflection (advisory only)")
+    ap.add_argument("--reuse-explanations", metavar="TRANSCRIPTS", help="reuse model-written explanations from an earlier run's agent_transcripts.jsonl (re-verified against the new packet; template for the rest)")
     ap.add_argument("--build-cards", action="store_true", help="rebuild the account cards (.cache/cards*.jsonl) even if present")
     ap.add_argument("--no-cards", action="store_true", help="serve requests from the dataset instead of account cards")
     ap.add_argument("--load-dataset", action="store_true", help="keep the full dataset in RAM at request time (default: cards in RAM, tables on disk)")
@@ -172,7 +189,10 @@ def main() -> int:
             cards, ds = _cards(ds, facts, rows_in, mode, rebuild=args.build_cards)
             if not args.load_dataset:
                 ds = None                        # request time: cards in RAM, tables on disk by section
-        lt = LongTermMemory(ds, facts, verify_context=load_context(DATASET, requests_file), cards=cards, disk=disk)
+        lt = LongTermMemory(ds, facts, verify_context=load_context(DATASET, requests_file), cards=cards, disk=disk,
+                            explanation_cache=_explanation_cache(Path(args.reuse_explanations)) if args.reuse_explanations else None)
+        if lt.explanation_cache:
+            print(f"explanations: reusing {len(lt.explanation_cache) - 1} model-written explanation(s) from {args.reuse_explanations}", file=sys.stderr)
         print(f"memory: {'cards in RAM, tables on disk' if ds is None else 'cards + full dataset in RAM'}", file=sys.stderr)
         orch = Orchestrator(lt, tracer=tracer, use_llm=use_llm, client=client, planner=args.planner,
                             llm_reflect=True if args.llm_reflect else None)

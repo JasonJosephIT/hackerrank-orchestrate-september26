@@ -1,6 +1,6 @@
 # Run Reflection
 
-Generated 2026-09-13 06:10 UTC from `traces.jsonl` and `agent_transcripts.jsonl`: 250 requests served by the orchestrator (D13–D17). The per-request reflection reads worker flags; this report reads the telemetry of the whole run so the same signals can be judged across requests.
+Generated 2026-09-13 08:18 UTC from `traces.jsonl` and `agent_transcripts.jsonl`: 250 requests served by the orchestrator (D13–D17). The per-request reflection reads worker flags; this report reads the telemetry of the whole run so the same signals can be judged across requests.
 
 ## Outcomes
 
@@ -60,16 +60,16 @@ Generated 2026-09-13 06:10 UTC from `traces.jsonl` and `agent_transcripts.jsonl`
 
 | Tool | Avg ms | Calls |
 |---|---|---|
-| expense_impact | 3.8 | 250 |
-| enumerate_candidate_plans | 2.7 | 195 |
-| counterfactual_without_messages | 2.6 | 250 |
-| spending_score | 2.0 | 250 |
+| expense_impact | 3.6 | 250 |
+| enumerate_candidate_plans | 2.6 | 195 |
+| counterfactual_without_messages | 2.5 | 250 |
+| spending_score | 1.9 | 250 |
 | list_payment_options | 1.8 | 250 |
 | recall_user_history | 0.5 | 250 |
 | check_plan_safety | 0.4 | 203 |
-| list_evidence | 0.3 | 250 |
 | score_gate | 0.3 | 250 |
-| project_balance | 0.3 | 250 |
+| list_evidence | 0.3 | 250 |
+| project_balance | 0.2 | 250 |
 
 ## Low-confidence requests
 

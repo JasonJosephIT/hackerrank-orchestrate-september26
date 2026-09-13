@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Callable
 
-from ..explain import decision_packet, llm_explanation, template_explanation
+from ..explain import decision_packet, grounded, llm_explanation, template_explanation
 from ..forecast import HORIZON_DAYS, amount_safe_today, earliest_full_payment_date, is_safe, projection
 from ..plans import Change, Decision, Plan, candidate_changes, choose, decide_for, enumerate_plans_for
 from ..render import render_row
@@ -475,11 +475,16 @@ def build_decision_packet(mem: UserMemory) -> dict:
 def write_explanation(mem: UserMemory, use_llm: bool = False) -> dict:
     dec, packet = mem.require("decision"), mem.require("packet")
     text, usage = None, {}
-    if use_llm:
+    cache = mem.long_term.explanation_cache or {}
+    cached = cache.get(mem.request.request_id)
+    if cached and grounded(cached, packet):          # an earlier run's model prose, re-verified against today's packet
+        text, usage = cached, {"cached": True, "model": cache.get("__model__")}
+    elif use_llm:
         text, usage = llm_explanation(packet, client=mem.get("llm_client"))
     if not text:
         text = template_explanation(dec)
         usage = {**usage, "fallback": True}
     mem.put("explanation", text)
     mem.put("usage", usage)
-    return dict(explanation=text, usage=usage, summary=("LLM" if not usage.get("fallback") else "template") + f": {text[:80]}")
+    src = "template" if usage.get("fallback") else ("LLM (reused)" if usage.get("cached") else "LLM")
+    return dict(explanation=text, usage=usage, summary=f"{src}: {text[:80]}")

@@ -194,3 +194,15 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 **Measured** (250 requests, template explanations): 250 reflect spans, 4,593 step spans; 19.9 tool calls and 17 ms per request; confidence high 19 / medium 182 / low 49; `completes_by_deadline` false on 54 (47 `not_affordable` + 7 `wait` past the desired date); thin headroom on 184; 15 decisions depend on message evidence; 0 re-plans. Contract columns unchanged (0 diffs vs the linear pipeline).
 
 **Rejected.** Letting the run-level statistics change a decision (no labels to justify it; the loop only moves confidence and the explanation). Persisting the run log across runs (users are one-to-one with requests here; a persisted log would need invalidation rules the dataset cannot exercise).
+
+## D18 — output.csv regenerated under exhausted quotas: qwen/qwen3.8-27b run + reused explanations (user direction, 2026-09-13)
+
+**Direction from Jason.** Regenerate `output.csv` with `openai/gpt-oss-20b`.
+
+**What happened.** The committed `output.csv` predated the D8/D11 forecast changes (97 rows differed on contract columns). The 120b daily quota was spent before the session; the 20b run stalled at 31 requests in 30 minutes because its daily quota was also spent (199,416 of 200,000). Of the models this key can reach, `qwen/qwen3.8-27b` produced grounded explanations on 3/3 probe packets at ~950 tokens per call; `allam-2-7b` echoed the packet, `groq/compound-mini` cost 3× the tokens, the llama models are not accessible. The qwen run served 224 requests (176 grounded model explanations, 40 rejected by the grounding guard, 8 rate-limit fallbacks; 205,652 tokens) before its own daily cap turned every remaining call into eight minutes of retry sleep for a template result, with the deadline four hours away.
+
+**Decision.** Stop the qwen run, keep its traces and transcripts, and add `--reuse-explanations <transcripts>`: a run takes the model-written explanation of any request present in an earlier transcript, re-verifies it with `explain.grounded()` against the freshly built packet, and uses the template for the rest; contract columns are always recomputed. `python3 code/main.py --no-llm --reuse-explanations .cache/agent_transcripts_qwen_partial.jsonl` produced the committed `output.csv`: 250 rows, verifier OK, 0 contract-column differences against the linear pipeline, 176 reused model explanations + 74 template. `usage_report.md` is built from the qwen run's traces with a run note describing the two steps; `build_usage_report.py` gained a note argument. The default explanation model stays `openai/gpt-oss-120b`.
+
+**Why.** Correct contract columns on every row matter more than prose on the last 74; the reuse path keeps the 176 grounded explanations without a single extra token; everything is stated in the usage report rather than hidden.
+
+**Rejected.** Waiting for the 120b quota (resets after the deadline). Re-running everything with the template only (loses 176 grounded explanations). Splicing rows by hand (the reuse option makes the result the product of one documented command and re-checks every reused sentence against today's numbers).

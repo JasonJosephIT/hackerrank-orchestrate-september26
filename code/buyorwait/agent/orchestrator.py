@@ -333,7 +333,9 @@ class Orchestrator:
                 with self.tracer.span("explain", worker=s.worker) as sp:
                     rep = WORKERS[s.worker].run(mem, step)
                     u = rep.result.get("usage", {}) if rep.ok else {}
-                    if self.use_llm:
+                    if u.get("cached"):
+                        sp.set(**{"buyorwait.explanation_reused": True, "buyorwait.fallback_used": False})
+                    elif self.use_llm:
                         sp.set_genai("groq", u, fallback_used=bool(u.get("fallback")))
             else:
                 with self.tracer.span("agent.step", worker=s.worker, tool=s.tool, iteration=iteration) as sp:
