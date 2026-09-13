@@ -2,7 +2,7 @@
 
 An affordability agent for the **Buy or Wait?** challenge. For each row in `dataset/requests.csv` it decides whether the user should pay in full, pay partially, use a supplied installment option, wait, or not proceed, and writes `output.csv`.
 
-Design in one line: a **deterministic financial engine** (pandas, no model calls) reconstructs the user's cash position, forecasts it, enumerates and ranks plans and verifies the output contract; an **LLM** (Groq, `openai/gpt-oss-120b`; `BUYORWAIT_EXPLAIN_MODEL` overrides) only writes `decision_explanation` from a typed decision packet, with a template fallback so the run never blocks. Full rationale in [`docs/DECISIONS.md`](docs/DECISIONS.md) (D1–D6) and the timebox in [`docs/PLAN.md`](docs/PLAN.md).
+Design in one line: a **deterministic financial engine** (pandas, no model calls) reconstructs the user's cash position, forecasts it, enumerates and ranks plans and verifies the output contract; an **orchestrator** per request sets a goal from the request and the user's criteria, plans which tools its six workers run, executes them over the user's memory and reflects on the result against the goal (re-planning on an audit failure); an **LLM** (Groq, `openai/gpt-oss-120b`; `BUYORWAIT_EXPLAIN_MODEL` overrides) only writes `decision_explanation` from a typed decision packet, with a template fallback so the run never blocks. Full rationale in [`docs/DECISIONS.md`](docs/DECISIONS.md) (D1–D13), the agentic runtime in [`docs/AGENTIC.md`](docs/AGENTIC.md) and the timebox in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Setup
 
@@ -22,7 +22,9 @@ python3 code/main.py --samples       # dataset/sample_requests.csv -> code/evalu
 python3 code/evaluation/score_samples.py          # per-field match against the 25 solved samples
 python3 code/buyorwait/verify.py output.csv       # standalone contract validator (also runs inside main.py)
 python3 code/evaluation/build_usage_report.py     # evaluation/usage_report.md from the run's OpenTelemetry spans
-python3 code/main.py --explain request_42         # decision packet + Spending Score / Expense Impact for one request
+python3 code/main.py --explain request_42         # agent transcript (goal, plan, findings, reflection) + decision packet for one request
+python3 code/main.py --planner llm --llm-reflect  # opt-in: Groq proposes the tool plan and critiques the decision (advisory only)
+python3 code/main.py --pipeline                   # legacy linear pipeline (same contract columns; parity oracle in tests)
 python3 -m pytest -q tests                        # unit + regression tests
 python3 code/package.py                           # build code.zip for submission (no dataset, secrets or caches)
 ```
@@ -32,6 +34,11 @@ python3 code/package.py                           # build code.zip for submissio
 ## How it works
 
 ```
+agent/memory.py       long-term (dataset, once) · episodic (one user's history recalled as of request_date) · working (per request)
+agent/orchestrator.py Goal -> plan (rules | llm) -> execute workers -> reflect (7 goal checks, concerns, confidence) -> re-plan -> deliver
+agent/workers.py      historian · forecaster · planner · scorer · auditor · explainer (findings + flags)
+agent/tools.py        18 schema-described tools, each wrapping one of the engine functions below
+
 dataset/*.csv ──► intake.py    join, dated FX, status rules, recurrence + income streams, evidence facts
                   evidence.py  messages: 30 regex templates (EN + Indonesian) -> typed facts; images: cached amounts
               ──► forecast.py  84-day balance path, amount_safe_to_pay, earliest_date_for_full_payment
@@ -55,14 +62,15 @@ Key rules (details and evidence in D6):
 ```
 code/main.py                      entry point
 code/buyorwait/                   engine modules (see above)
+code/buyorwait/agent/             orchestrator, workers, tools, memory (docs/AGENTIC.md)
 code/evidence/image_facts.json    cached image extractions (event_id -> amount, field, confidence)
 code/evaluation/score_samples.py  sample scorer
 code/evaluation/build_usage_report.py, usage_report.md   token usage + cost of the final run
-tests/                            pytest suite (contract, forecast, evidence, sample regression)
+tests/                            pytest suite (contract, forecast, evidence, sample regression, agent parity + re-planning)
 docs/PLAN.md, docs/DECISIONS.md   timebox and decision log
 output.csv                        predictions for dataset/requests.csv
 ```
 
 ## Observability
 
-Every run writes `.cache/traces.jsonl` (one JSON span per line). Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also export OTLP/HTTP to Tempo, Jaeger, Honeycomb, etc. `BUYORWAIT_TRACING=0` disables tracing.
+Every run writes `.cache/traces.jsonl` (one JSON span per line: one trace per request, a span per orchestrator step with worker/tool/flags, `gen_ai.*` usage on model calls) and, on a full run, `.cache/agent_transcripts.jsonl` (goal, plan, findings, reflections and ledger per request). Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also export OTLP/HTTP to Tempo, Jaeger, Honeycomb, etc. `BUYORWAIT_TRACING=0` disables tracing.

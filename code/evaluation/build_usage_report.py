@@ -22,6 +22,8 @@ PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing (console
     "meta-llama/llama-4-scout-17b-16e-instruct": (0.11, 0.34),
 }
 PROVIDER = {"groq": "Groq"}
+STAGES = {"explain": "decision_explanation (explainer worker)", "agent.plan": "orchestrator planning (opt-in, --planner llm)",
+          "agent.reflect": "orchestrator critique (opt-in, --llm-reflect)"}
 PRICE_NOTE = "; ".join(f"{m} ${pi:.2f} in / ${po:.2f} out" for m, (pi, po) in PRICES.items())
 
 
@@ -29,10 +31,15 @@ def main(path: Path) -> int:
     spans = [json.loads(l) for l in path.open(encoding="utf-8")] if path.exists() else []
     requests = {s["trace_id"] for s in spans if s["name"] == "buyorwait.request"}
     per_model = defaultdict(lambda: {"calls": 0, "input": 0, "output": 0, "fallbacks": 0, "provider": "?"})
+    per_stage = defaultdict(lambda: {"calls": 0, "input": 0, "output": 0})
     for s in spans:
         a = s.get("attributes", {})
         if "gen_ai.request.model" not in a:
             continue
+        st = per_stage[STAGES.get(s["name"], s["name"])]
+        st["calls"] += 1
+        st["input"] += int(a.get("gen_ai.usage.input_tokens") or 0)
+        st["output"] += int(a.get("gen_ai.usage.output_tokens") or 0)
         m = per_model[a["gen_ai.request.model"]]
         m["provider"] = PROVIDER.get(a.get("gen_ai.system"), a.get("gen_ai.system") or "?")
         inp, outp = int(a.get("gen_ai.usage.input_tokens") or 0), int(a.get("gen_ai.usage.output_tokens") or 0)
@@ -47,8 +54,9 @@ def main(path: Path) -> int:
              f"Run recorded in `{path.name}`: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · "
              f"{len(requests)} requests processed (OpenTelemetry spans, `gen_ai.*` attributes). "
              f"`python3 code/main.py` writes this file only on a full run; `--samples`, `--explain` and `--limit` use separate trace files.", "",
-             "The deterministic engine (intake, forecast, plans, verification) makes no model calls. The LLM writes "
-             "`decision_explanation` only; a template fallback is used when a call fails, so fallbacks are listed too.", "",
+             "The deterministic engine (intake, forecast, plans, verification) makes no model calls. In the default agentic "
+             "run (D13) the LLM writes `decision_explanation` only; a template fallback is used when a call fails, so fallbacks "
+             "are listed too. The orchestrator's LLM planner and critique are opt-in and appear as separate stages when used.", "",
              "| Provider | Model | Calls | Input tokens | Output tokens | Total tokens | Est. cost (USD) | Fallbacks |",
              "|---|---|---|---|---|---|---|---|"]
     tot = {"calls": 0, "input": 0, "output": 0, "cost": 0.0, "fallbacks": 0}
@@ -65,6 +73,9 @@ def main(path: Path) -> int:
         lines += ["", "> **This run made no model calls** (no `GROQ_API_KEY`, `--no-llm`, or the network blocked "
                   "`api.groq.com`): every `decision_explanation` came from the deterministic template. Re-run "
                   "`python3 code/main.py` with the key available, then this script, to record the LLM usage of the final run."]
+    if per_stage:
+        lines += ["", "| Stage | Calls | Input tokens | Output tokens |", "|---|---|---|---|"]
+        lines += [f"| {k} | {v['calls']} | {v['input']:,} | {v['output']:,} |" for k, v in sorted(per_stage.items())]
     lines += ["", f"- Requests: {len(requests)}",
               f"- Model calls per request: {tot['calls'] / n_req:.2f}",
               f"- Average tokens per request: {total_tokens / n_req:,.1f} (input {tot['input'] / n_req:,.1f}, output {tot['output'] / n_req:,.1f})",

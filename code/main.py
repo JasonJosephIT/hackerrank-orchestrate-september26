@@ -3,10 +3,14 @@
     python3 code/main.py                # dataset/requests.csv -> ./output.csv (repo root)
     python3 code/main.py --samples      # dataset/sample_requests.csv -> code/evaluation/sample_output.csv
     python3 code/main.py --no-llm       # template explanations only (no API calls)
-    python3 code/main.py --explain request_42   # print the decision packet + score report for one request
+    python3 code/main.py --explain request_42   # print the agent transcript, decision packet + score report for one request
+    python3 code/main.py --pipeline     # legacy linear pipeline instead of the orchestrator (same columns)
 
-Pipeline: intake -> evidence -> forecast -> plans -> verify -> explain (LLM, template fallback).
-The LLM only writes decision_explanation; every other column is computed deterministically.
+Default runtime (D13): an orchestrator per request sets a goal from the request and the user's criteria, plans which
+tools its workers (historian, forecaster, planner, scorer, auditor, explainer) run, executes them over the user's
+memory, reflects on the outcome against the goal and re-plans on an audit failure. Every tool wraps the deterministic
+engine (intake -> forecast -> plans -> score -> verify), so the contract columns are identical to `--pipeline`.
+The LLM only writes decision_explanation (and, opt-in, plans or critiques); every other column is computed deterministically.
 """
 from __future__ import annotations
 
@@ -21,12 +25,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "code"))
 
 from buyorwait import telemetry  # noqa: E402
+from buyorwait.agent.memory import LongTermMemory  # noqa: E402
+from buyorwait.agent.orchestrator import Orchestrator  # noqa: E402
 from buyorwait.evidence import image_amounts  # noqa: E402
 from buyorwait.explain import decision_packet, llm_explanation, template_explanation  # noqa: E402
 from buyorwait.forecast import projection  # noqa: E402
-from buyorwait.formatting import fmt_amount, fmt_plain  # noqa: E402
 from buyorwait.intake import Dataset, build_state  # noqa: E402
 from buyorwait.plans import decide, request_from_row  # noqa: E402
+from buyorwait.render import render_row  # noqa: E402,F401  (re-exported for tests)
 from buyorwait.score import expense_impact, spending_score  # noqa: E402
 from buyorwait.verify import COLUMNS, load_context, verify_rows  # noqa: E402
 
@@ -42,30 +48,8 @@ def _load_env():
                 os.environ.setdefault(k.strip(), v.strip())
 
 
-def render_row(dec, explanation: str) -> dict:
-    st, req, p = dec.state, dec.request, dec.plan
-    cur = st.currency
-    plan = "|".join(f"{d}:{fmt_amount(a, cur)}" for d, a in p.payments) if p else "none"
-    changes = "|".join(c.render(lambda x: fmt_amount(x, cur)) for c in p.changes) if p and p.changes else "none"
-    if dec.status == "affordable_now":
-        earliest = str(req.request_date)
-    elif dec.status == "not_affordable":
-        earliest = ""
-    else:
-        earliest = str(dec.earliest) if dec.earliest else ""
-    return {
-        "request_id": req.request_id,
-        "amount_safe_to_pay": fmt_plain(dec.safe_today),
-        "affordability_status": dec.status,
-        "recommended_payment_method": dec.method,
-        "payment_plan": plan,
-        "earliest_date_for_full_payment": earliest,
-        "spending_changes_needed": changes,
-        "decision_explanation": explanation,
-    }
-
-
-def run_one(ds, facts, row, use_llm: bool, tracer, client=None):
+def run_one_pipeline(ds, facts, row, use_llm: bool, tracer, client=None):
+    """Legacy linear pipeline (kept as the parity oracle for the orchestrator)."""
     req = request_from_row(row)
     with tracer.span("buyorwait.request", request_id=req.request_id, user_id=req.user_id,
                      request_type=req.request_type, requested_amount=req.amount) as root:
@@ -96,12 +80,21 @@ def run_one(ds, facts, row, use_llm: bool, tracer, client=None):
     return dec, render_row(dec, explanation), packet, usage
 
 
+def run_one(orch: Orchestrator, row):
+    """Agentic path: the orchestrator serves the request end to end."""
+    res = orch.handle_row(row)
+    return res.decision, res.row, res.packet, res.usage, res
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--samples", action="store_true", help="run on dataset/sample_requests.csv instead")
     ap.add_argument("--no-llm", action="store_true", help="skip Groq; template explanations only")
     ap.add_argument("--explain", metavar="REQUEST_ID", help="print the decision packet for one request and exit")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--pipeline", action="store_true", help="legacy linear pipeline instead of the orchestrator")
+    ap.add_argument("--planner", choices=["rules", "llm"], default=None, help="orchestrator planner (default: BUYORWAIT_AGENT_PLANNER or rules)")
+    ap.add_argument("--llm-reflect", action="store_true", help="add a model critique to the orchestrator's reflection (advisory only)")
     args = ap.parse_args()
     _load_env()
 
@@ -127,14 +120,33 @@ def main() -> int:
         from groq import Groq
         client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
+    requests_file = "sample_requests.csv" if args.samples else "requests.csv"
+    orch = None
+    if not args.pipeline:
+        lt = LongTermMemory(ds, facts, verify_context=load_context(DATASET, requests_file))
+        orch = Orchestrator(lt, tracer=tracer, use_llm=use_llm, client=client, planner=args.planner,
+                            llm_reflect=True if args.llm_reflect else None)
+    transcripts = None
+    if orch is not None and mode == "full":
+        (ROOT / ".cache").mkdir(exist_ok=True)
+        transcripts = (ROOT / ".cache" / "agent_transcripts.jsonl").open("w", encoding="utf-8")
+
     out_rows, packets, fallbacks, last_error = [], [], 0, None
     for i, row in enumerate(rows_in.itertuples(index=False), 1):
-        dec, out, packet, usage = run_one(ds, facts, row, use_llm, tracer, client)
+        if orch is None:
+            dec, out, packet, usage = run_one_pipeline(ds, facts, row, use_llm, tracer, client)
+            res = None
+        else:
+            dec, out, packet, usage, res = run_one(orch, row)
+            if transcripts is not None:
+                transcripts.write(json.dumps(res.summary(), default=str) + "\n")
         out_rows.append(out)
         packets.append(packet)
         if use_llm and usage.get("error"):
             fallbacks, last_error = fallbacks + 1, usage["error"]
         if args.explain:
+            if res is not None:
+                print(json.dumps(res.summary(), indent=2, default=str))
             print(json.dumps(packet, indent=2, default=str))
             print(json.dumps(out, indent=2))
             tracer.flush()
@@ -146,7 +158,9 @@ def main() -> int:
         print(f"WARNING: {fallbacks}/{len(rows_in)} explanations fell back to the template; last error: {last_error}",
               file=sys.stderr)
 
-    ctx = load_context(DATASET, "sample_requests.csv" if args.samples else "requests.csv")
+    if transcripts is not None:
+        transcripts.close()
+    ctx = load_context(DATASET, requests_file)
     errs = verify_rows(out_rows, ctx)
     if errs:
         print("VERIFY FAILED:\n - " + "\n - ".join(errs[:50]), file=sys.stderr)
