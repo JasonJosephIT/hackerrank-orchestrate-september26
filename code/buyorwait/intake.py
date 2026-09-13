@@ -140,6 +140,14 @@ class FinancialState:
     notes: list[str]
     facts: list[Fact]
     events: pd.DataFrame
+    reserve: float = 0.0           # conservative-mode cushion above `minimum` (D13); 0 unless irregular income
+    irregular_income: bool = False
+    profile: dict | None = None    # account profile (D14): archetype + capped adjustment; score/explain layer only
+
+    @property
+    def floor(self) -> float:
+        """Balance the projection must never drop below: the user's minimum plus any conservative cushion."""
+        return self.minimum + self.reserve
 
     @property
     def recurrence_by_key(self) -> dict[str, "Recurrence"]:
@@ -182,6 +190,12 @@ def _stat(vals: list[float], how: str) -> float:
     if how == "median":
         s = sorted(vals)
         return s[len(s) // 2] if len(s) % 2 else (s[len(s) // 2 - 1] + s[len(s) // 2]) / 2
+    if how.startswith("q"):          # "q0.25" -> lower quartile, linear interpolation
+        q = float(how[1:])
+        srt = sorted(vals)
+        pos = q * (len(srt) - 1)
+        lo, hi = int(pos), min(int(pos) + 1, len(srt) - 1)
+        return srt[lo] + (srt[hi] - srt[lo]) * (pos - lo)
     if how.startswith("mean"):
         n = int(how[4:]) if len(how) > 4 else len(vals)
         v = vals[-n:]
@@ -216,6 +230,11 @@ DEFAULT_CFG = dict(
     outlier_ratio=3.0,           # amounts above 3x the group median are one-offs, not the recurring level
     first_gap_map={21: 14},      # sample-calibrated: a 3-week item's next occurrence lands ~2 weeks after the last one (D6)
     skip_subweekly_due_today=True,  # sample-calibrated (D11): a sub-weekly stream whose next occurrence is request_date is not projected
+    # Conservative mode for irregular income (docs/DECISIONS.md D13). Off by default; enable with
+    # `--conservative` or BUYORWAIT_CONSERVATIVE=1. Only ever makes the answer safer.
+    conservative_income=False,
+    income_haircut_quantile=0.25,  # variable income pool forecast at this quantile of its history instead of the mean
+    reserve_months=0.1,            # cushion above minimum_balance_to_keep, in months of essential outflow, when income is irregular
 )
 
 
@@ -298,6 +317,7 @@ def build_state(ds: Dataset, user_id: str, request_date: date, amount_facts: dic
     inc = hist[(hist.event_type == "income") & (hist.direction == "credit")]
     income_recs: list[Recurrence] = []
     employment_over = False
+    irregular = False
     if not inc.empty:
         latest = inc.sort_values(["sdate", "event_id"]).iloc[-1]
         if "final" in latest.description.lower():
@@ -333,12 +353,16 @@ def build_state(ds: Dataset, user_id: str, request_date: date, amount_facts: dic
             cad = _cadence(list(pool.sdate), cfg["gap_window"])
             if 0 < cad <= 32 or cad == 0:
                 last = pool.iloc[-1]
+                irregular = True
+                stat = f"q{cfg['income_haircut_quantile']}" if cfg["conservative_income"] else "mean"
+                level = _stat(amounts, stat)
                 income_recs.append(Recurrence(
                     key=f"{last.category}/income", category=last.category, event_type="income", direction="credit",
-                    amount=_stat(amounts, "mean"), cadence_days=cad, next_date=_advance(last.sdate, cad, request_date),
+                    amount=level, cadence_days=cad, next_date=_advance(last.sdate, cad, request_date),
                     last_event_id=last.event_id, flexibility="fixed", minimum_allowed_amount=None, occurrences=len(pool),
                     history=amounts, description="variable income"))
-                notes.append(f"variable income pool forecast at mean {_stat(amounts, 'mean'):.2f} every {cad or 'month'} days")
+                how = f"{stat[1:]} quantile (conservative haircut from mean {_stat(amounts, 'mean'):.2f})" if cfg["conservative_income"] else "mean"
+                notes.append(f"variable income pool forecast at {how} {level:.2f} every {cad or 'month'} days")
     if employment_over:
         income_recs = []
 
@@ -369,9 +393,16 @@ def build_state(ds: Dataset, user_id: str, request_date: date, amount_facts: dic
         _apply_facts(ds, cur, request_date, facts, income_recs, recurring, fixed, notes)
 
     recurring.extend(income_recs)
-    return FinancialState(user_id=user_id, request_date=request_date, currency=cur,
-                          balance=float(prof.current_available_balance), minimum=float(prof.minimum_balance_to_keep),
-                          recurring=recurring, fixed_flows=fixed, notes=notes, facts=facts, events=ev)
+    state = FinancialState(user_id=user_id, request_date=request_date, currency=cur,
+                           balance=float(prof.current_available_balance), minimum=float(prof.minimum_balance_to_keep),
+                           recurring=recurring, fixed_flows=fixed, notes=notes, facts=facts, events=ev,
+                           irregular_income=irregular)
+    if cfg["conservative_income"] and irregular and cfg["reserve_months"] > 0:
+        essential = sum(r.amount * (30.0 / (r.cadence_days or 30)) for r in recurring
+                        if r.direction == "debit" and r.protected) or state.monthly_outflow()
+        state.reserve = round(cfg["reserve_months"] * essential, 2)
+        notes.append(f"irregular income: conservative reserve {state.reserve:.2f} {cur} held above the minimum balance")
+    return state
 
 
 def _apply_facts(ds: Dataset, cur: str, rd: date, facts: list[Fact], income: list[Recurrence],

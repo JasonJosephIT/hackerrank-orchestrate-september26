@@ -65,3 +65,17 @@ def test_periodic_debit_is_charged_before_same_day_credit_but_monthly_is_netted(
     # the plan payment on a payday is still charged last, after the salary
     assert is_safe(monthly, [(payday, 900)])
     assert not is_safe(weekly, [(payday, 900)])
+
+
+def test_conservative_reserve_raises_the_floor():
+    # D13: the reserve is a cushion above the user's minimum; safe amount and earliest date honour it
+    st = _state(balance=1000, minimum=200)
+    assert amount_safe_today(st, 5000) == 800
+    st.reserve = 150
+    assert st.floor == 350
+    assert amount_safe_today(st, 5000) == 650
+    assert is_safe(st, [(date(2026, 1, 1), 650)])
+    assert not is_safe(st, [(date(2026, 1, 1), 651)])
+    assert earliest_full_payment_date(st, 700) is None
+    st.reserve = 0
+    assert earliest_full_payment_date(st, 700) == date(2026, 1, 1)
