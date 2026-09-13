@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from . import score
 from .forecast import HORIZON_DAYS, amount_safe_today, earliest_full_payment_date, is_safe
 from .intake import Dataset, FinancialState, Recurrence
 
@@ -107,9 +108,22 @@ def candidate_changes(state: FinancialState, profile) -> list[Change]:
 
 
 def with_changes(state: FinancialState, payments, candidates: list[Change]) -> list[Change] | None:
-    """Smallest-first accumulation of permitted changes until the payments are safe, then prune."""
+    """Accumulate permitted changes until the payments are safe, then prune (D13).
+
+    Candidates are tried in order of how closely their own Spending Score effect (score.change_impact)
+    offsets this payment's Spending Score hit (score.payment_impact) -- reaching for a cut whose impact
+    matches the purchase's impact, rather than always the cheapest dollar saving in isolation. Raw
+    dollar saving is only the tie-break. Safety is still the one hard gate: a change set that doesn't
+    keep the projected balance >= minimum_balance_to_keep is never accepted, regardless of score.
+    """
+    if not candidates:
+        return None
+    baseline = score.components(state)
+    hit = score.payment_impact(state, payments, before=baseline)["composite_delta"]  # <= 0: how much this hurts
+    ranked = sorted(candidates, key=lambda c: (
+        abs(score.change_impact(state, c, before=baseline)["composite_delta"] + hit), c.saving, c.event_id))
     chosen: list[Change] = []
-    for c in candidates:
+    for c in ranked:
         chosen.append(c)
         if is_safe(state, payments, horizon=_plan_horizon(state, payments), **_change_kwargs(chosen)):
             break

@@ -12,6 +12,7 @@ from datetime import date
 
 from .formatting import fmt_amount
 from .plans import Decision
+from .ratelimit import pace_after_call, pace_before_call
 
 # Groq retired llama-3.3-70b-versatile in Sept 2026. Default: openai/gpt-oss-120b (D7); allam-2-7b was a short POC (D9)
 # and is selectable via BUYORWAIT_EXPLAIN_MODEL.
@@ -176,22 +177,8 @@ def grounded(text: str, packet: dict) -> bool:
     return True
 
 
-TOKENS_PER_MINUTE = int(os.environ.get("BUYORWAIT_EXPLAIN_TPM", "7000"))  # Groq free tier: 8000 TPM per model
-_pace = {"next_ok": 0.0}
 _UNICODE_FIXES = str.maketrans({"\u202f": " ", "\u00a0": " ", "\u2011": "-", "\u2013": "-", "\u2014": "-",
                                 "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
-
-
-def _pace_before_call():
-    """Proactive pacing: wait until the tokens spent by the previous call have 'refilled' at TOKENS_PER_MINUTE, so a
-    250-row run stays under the per-minute cap instead of bouncing off 429s."""
-    wait = _pace["next_ok"] - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
-
-
-def _pace_after_call(total_tokens: int):
-    _pace["next_ok"] = time.monotonic() + 60.0 * total_tokens / max(TOKENS_PER_MINUTE, 1)
 
 
 def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None, dict]:
@@ -212,9 +199,9 @@ def llm_explanation(packet: dict, client=None, tracer=None) -> tuple[str | None,
     usage: dict = {"model": MODEL, "input_tokens": 0, "output_tokens": 0}
     for attempt in range(MAX_RETRIES + 1):
         try:
-            _pace_before_call()
+            pace_before_call()
             resp = client.chat.completions.create(**kwargs)
-            _pace_after_call(resp.usage.total_tokens or (resp.usage.prompt_tokens + resp.usage.completion_tokens))
+            pace_after_call(resp.usage.total_tokens or (resp.usage.prompt_tokens + resp.usage.completion_tokens))
         except RateLimitError as e:  # free tier: 8k tokens/minute; wait for the window the API asks for
             m = re.search(r"try again in ([\d.]+)s", str(e))
             wait = min(60.0, float(m.group(1)) + 0.5) if m else 6.0 * (attempt + 1)
