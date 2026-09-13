@@ -19,6 +19,7 @@
 | Change the explanation prompt or grounding guard | `code/buyorwait/explain.py` | `_config/voice.md` |
 | Check accuracy on the 25 solved samples | `code/evaluation/score_samples.py` | `tests/test_engine_samples.py` (floors) |
 | Build the usage report / cost | `code/evaluation/build_usage_report.py` (reads `.cache/traces.jsonl`) | `AGENTS.md` §6.5 |
+| See what the orchestrator did across the run | `code/evaluation/run_reflection.md` (rebuild: `build_run_reflection.py`) | `docs/AGENTIC.md` §5 |
 | Package for submission | `code/package.py` → `code.zip` | `AGENTS.md` §6.5 |
 | Record a design decision | `docs/DECISIONS.md` (append `D<n>`) | `_config/voice.md` |
 | Prepare the interview | `docs/INTERVIEW.md`, `docs/DECISIONS.md` | `docs/AGENTIC.md` |

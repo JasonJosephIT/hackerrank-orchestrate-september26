@@ -23,7 +23,7 @@ PRICES = {  # USD per 1M tokens (input, output) — Groq public pricing (console
 }
 PROVIDER = {"groq": "Groq"}
 STAGES = {"explain": "decision_explanation (explainer worker)", "agent.plan": "orchestrator planning (opt-in, --planner llm)",
-          "agent.reflect": "orchestrator critique (opt-in, --llm-reflect)"}
+          "agent.critique": "orchestrator critique (opt-in, --llm-reflect)"}
 PRICE_NOTE = "; ".join(f"{m} ${pi:.2f} in / ${po:.2f} out" for m, (pi, po) in PRICES.items())
 
 

@@ -181,3 +181,16 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 **Why.** The orchestration already had a folder per concern; what it lacked was a map an agent can read in one turn and a contract per worker in the place the code lives. The ICM budgets (map < 1,500 tokens, routing < 2,000, contracts < 500) kept each file to what a session needs at that stage, matching the runtime's own principle that a request loads only its card.
 
 **Rejected.** Full mode with physical `stages/NN/` folders and `output/` directories: the stages here are Python workers exchanging working-memory keys, not markdown hand-offs, and a human review gate between workers would break a 250-request batch; the `--explain` transcript is the review surface instead. Replacing `CLAUDE.md` with the identity file (loses the mandatory logging protocol).
+
+## D17 — Telemetry feeds the reflection: reflect spans and a run-level reflection (user direction, 2026-09-13)
+
+**Direction from Jason.** Is telemetry involved in the reflection? It was write-only. Add both proposed pieces.
+
+**Decision.**
+- `agent.reflect` span per iteration with `check.<name>` booleans, concerns, confidence, `replan`, `prior_requests`; the optional model critique's span is renamed `agent.critique` (usage report stage updated).
+- Run log on the orchestrator (`run_log`, per user): a later request for a user whose earlier request in the same run was re-planned or ended low-confidence gets a concern and a confidence cap at medium. Per-run state, never persisted, never a contract column.
+- `agent/run_reflection.py` + `code/evaluation/build_run_reflection.py`: read `.cache/traces.jsonl` and `.cache/agent_transcripts.jsonl`, write `code/evaluation/run_reflection.md` after every full run (outcomes × confidence, gate/recall rates, iterations, tool calls, wall time, failed checks, concern and flag frequencies, per-tool timings, re-plans, low-confidence requests).
+
+**Measured** (250 requests, template explanations): 250 reflect spans, 4,593 step spans; 19.9 tool calls and 17 ms per request; confidence high 19 / medium 182 / low 49; `completes_by_deadline` false on 54 (47 `not_affordable` + 7 `wait` past the desired date); thin headroom on 184; 15 decisions depend on message evidence; 0 re-plans. Contract columns unchanged (0 diffs vs the linear pipeline).
+
+**Rejected.** Letting the run-level statistics change a decision (no labels to justify it; the loop only moves confidence and the explanation). Persisting the run log across runs (users are one-to-one with requests here; a persisted log would need invalidation rules the dataset cannot exercise).

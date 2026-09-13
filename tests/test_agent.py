@@ -181,3 +181,59 @@ def test_fetch_events_reads_one_user_section_from_disk(lt, tmp_path):
     out = registry.call("fetch_events", mem, event_ids=None)
     assert out["source"] == "disk" and out["count"] == int((lt.ds.events.user_id == req.user_id).sum())
     assert mem.ledger[-1].tool == "fetch_events"
+
+
+# ---- D17: reflection telemetry and run-level reflection -------------------------------------
+def test_reflect_span_and_run_reflection_report(lt, tmp_path, monkeypatch):
+    """Every iteration emits an agent.reflect span with the checks; the run-level reflection reads spans + transcripts."""
+    from buyorwait import telemetry
+    from buyorwait.agent.run_reflection import summarise, write_report
+    if not telemetry._HAVE_OTEL:
+        pytest.skip("opentelemetry not installed")
+    trace_path = tmp_path / "traces.jsonl"
+    tracer = telemetry._OtelTracer(trace_path)
+    orch = Orchestrator(lt, tracer=tracer, use_llm=False)
+    rows = list(lt.ds.samples.itertuples(index=False))[:6]
+    transcripts = tmp_path / "agent_transcripts.jsonl"
+    with transcripts.open("w") as f:
+        for row in rows:
+            f.write(__import__("json").dumps(orch.handle_row(row).summary(), default=str) + "\n")
+    tracer.flush()
+    spans = [__import__("json").loads(l) for l in trace_path.open()]
+    reflects = [s for s in spans if s["name"] == "agent.reflect"]
+    assert len(reflects) == len(rows)
+    for s in reflects:
+        a = s["attributes"]
+        assert a["confidence"] in ("high", "medium", "low") and a["ok"] is True
+        assert all(f"check.{k}" in a for k in ("completes_by_deadline", "minimum_respected", "method_accepted",
+                                                "installments_within_max", "partial_two_payment_rule",
+                                                "changes_permitted_only", "safe_amount_in_bounds"))
+    sm = summarise(trace_path, transcripts)
+    assert sm["requests"] == len(rows) and sum(sm["by_confidence"].values()) == len(rows)
+    assert sm["tool_calls_avg"] > 10 and sm["tool_avg_ms"]
+    out = write_report(trace_path, transcripts, tmp_path / "run_reflection.md")
+    text = out.read_text()
+    assert "# Run Reflection" in text and "## Outcomes" in text and str(len(rows)) in text
+
+
+def test_run_level_feedback_lowers_confidence_for_a_repeat_user(lt, monkeypatch):
+    """A later request for the same user in the same run inherits a concern when the earlier one needed a re-plan."""
+    orch = Orchestrator(lt, use_llm=False)
+    row = next(r for r in lt.ds.samples.itertuples(index=False) if r.request_id == "request_12")
+    real = registry.get("check_plan_safety").fn
+    calls = {"n": 0}
+
+    def flaky(mem, payments, changes=None):
+        calls["n"] += 1
+        out = real(mem, payments, changes)
+        return {**out, "safe": False, "summary": "UNSAFE (injected)"} if calls["n"] == 1 else out
+    monkeypatch.setattr(registry.get("check_plan_safety"), "fn", flaky)
+    first = orch.handle_row(row)                       # re-planned
+    assert len(first.reflections) == 2 and orch.run_log[first.goal.request.user_id][0]["replanned"]
+    second = orch.handle_row(row)                      # same user, same run: inherits the concern
+    assert len(second.reflections) == 1
+    assert any("earlier request in this run" in c for c in second.reflections[-1].concerns)
+    assert second.reflections[-1].confidence in ("medium", "low")
+    assert second.row == first.row or second.row["affordability_status"] != first.row["affordability_status"]  # columns unaffected by the concern
+    fresh = Orchestrator(lt, use_llm=False).handle_row(row)   # a new run has no memory of it
+    assert not any("earlier request in this run" in c for c in fresh.reflections[-1].concerns)

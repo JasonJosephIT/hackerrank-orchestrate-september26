@@ -215,6 +215,11 @@ def main() -> int:
         dstat = disk.stats()
         print(f"disk reads at request time: {dstat['reads']} section read(s), {dstat['bytes'] / 1e3:.0f} KB; "
               f"peak RSS {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB", file=sys.stderr)
+        if mode == "full":
+            tracer.flush()
+            from buyorwait.agent.run_reflection import write_report
+            rpt = write_report(tracer_path, ROOT / ".cache" / "agent_transcripts.jsonl", ROOT / "code" / "evaluation" / "run_reflection.md")
+            print(f"run reflection -> {rpt.relative_to(ROOT)}", file=sys.stderr)
     ctx = load_context(DATASET, requests_file)
     errs = verify_rows(out_rows, ctx)
     if errs:

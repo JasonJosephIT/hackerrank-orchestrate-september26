@@ -267,6 +267,9 @@ class Orchestrator:
         self.model = model
         self.llm_reflect = (os.environ.get("BUYORWAIT_AGENT_LLM_REFLECT", "0") == "1") if llm_reflect is None else llm_reflect
         self.llm_reflect = self.llm_reflect and client is not None
+        # run-level memory of reflections, keyed by user: a later request for the same user in this run inherits
+        # a concern when an earlier one needed a re-plan or ended with low confidence (D17)
+        self.run_log: dict[str, list[dict]] = {}
 
     # ---- entry -------------------------------------------------------------------------
     def handle_row(self, row) -> AgentResult:
@@ -284,14 +287,22 @@ class Orchestrator:
             reports: list[WorkerReport] = []
             reflections: list[Reflection] = []
             analyse = [s for s in plan if s.phase == "analyse"]
+            prior = self.run_log.get(req.user_id, [])
             for it in range(1, MAX_ITERATIONS + 1):
                 reports += self.execute(analyse, mem, it)
-                refl = self.reflect(goal, mem, reports, it)
+                with self.tracer.span("agent.reflect", iteration=it) as sp:
+                    refl = self.reflect(goal, mem, reports, it, prior=prior)
+                    sp.set(ok=refl.ok, confidence=refl.confidence, concerns=" | ".join(refl.concerns)[:500] or None,
+                           replan=",".join(s.tool for s in refl.replan) or None, prior_requests=len(prior),
+                           **{f"check.{k}": v for k, v in refl.checks.items()})
                 reflections.append(refl)
                 if refl.ok:
                     break
                 analyse = refl.replan
             mem.put("reflection", reflections[-1].as_dict())
+            self.run_log.setdefault(req.user_id, []).append(dict(
+                request_id=req.request_id, confidence=reflections[-1].confidence, iterations=len(reflections),
+                replanned=len(reflections) > 1, concerns=list(reflections[-1].concerns)))
             reports += self.execute([s for s in plan if s.phase == "deliver"], mem, 0)
             dec = mem.require("decision")
             row = mem.get("row") or render_row(dec, mem.get("explanation") or "")
@@ -334,7 +345,8 @@ class Orchestrator:
         return out
 
     # ---- reflect -----------------------------------------------------------------------
-    def reflect(self, goal: Goal, mem: UserMemory, reports: list[WorkerReport], iteration: int) -> Reflection:
+    def reflect(self, goal: Goal, mem: UserMemory, reports: list[WorkerReport], iteration: int,
+                prior: list[dict] | None = None) -> Reflection:
         req = goal.request
         dec = mem.require("decision")
         # the latest report per tool is authoritative (a re-run audit supersedes the failed one)
@@ -387,6 +399,16 @@ class Orchestrator:
             confidence = "medium"
         else:
             confidence = "high"
+        # feedback from earlier requests of the same user in this run (run-level memory, D17)
+        prior = prior or []
+        if prior and not replan:
+            worrying = [q for q in prior if q["replanned"] or q["confidence"] == "low"]
+            if worrying:
+                q = worrying[-1]
+                concerns.append(f"an earlier request in this run ({q['request_id']}) "
+                                + ("needed a re-plan" if q["replanned"] else "ended with low confidence"))
+                if confidence == "high":
+                    confidence = "medium"
         refl = Reflection(iteration, checks, concerns, confidence, replan)
         if self.llm_reflect and not replan:
             refl.llm_critique = self._llm_critique(goal, mem, refl)
@@ -409,7 +431,7 @@ class Orchestrator:
                   "\"confidence\": \"high\"|\"medium\"|\"low\"}. Disagree only if a criterion is plainly violated by the decision shown.")
         usage = {"model": self.model, "input_tokens": 0, "output_tokens": 0}
         out = None
-        with self.tracer.span("agent.reflect", planner=self.planner.name) as sp:
+        with self.tracer.span("agent.critique", planner=self.planner.name) as sp:
             try:
                 kw = dict(model=self.model, temperature=0.0, max_tokens=300,
                           messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}])

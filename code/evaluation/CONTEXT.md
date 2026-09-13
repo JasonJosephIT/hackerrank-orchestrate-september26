@@ -11,6 +11,8 @@ evaluation/
 ├── score_samples.py        # Per-field match of sample_output.csv vs dataset/sample_requests.csv
 ├── build_usage_report.py   # .cache/traces.jsonl -> usage_report.md (per model, per stage, cost)
 ├── usage_report.md         # Required in code.zip; must describe the run that produced output.csv
+├── build_run_reflection.py # traces + transcripts -> run_reflection.md (written automatically after a full run)
+├── run_reflection.md       # What the orchestrator did across the run: outcomes x confidence, checks, concerns, timings
 ├── sample_output.csv       # Last `--samples` run
 ├── packets.jsonl / sample_packets.jsonl   # Decision packets of the last full / samples run
 ├── run_factors.py, factors.csv            # Two-factor profile for all users (D12)

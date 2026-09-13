@@ -13,7 +13,8 @@ agent/
 ├── store.py         # DiskTables: byte-range index per user/request (.cache/index/), slice(), dataset_for(), events()
 ├── tools.py         # 20 schema-described tools (registry); each reads/writes working memory and records a ledger entry
 ├── workers.py       # Step, WorkerReport, the six workers (interpret tool results into findings + flags)
-└── orchestrator.py  # Goal, RulePlanner / LLMPlanner + validate_plan, execute, reflect, AgentResult
+├── orchestrator.py  # Goal, RulePlanner / LLMPlanner + validate_plan, execute, reflect (+ run log per user), AgentResult
+└── run_reflection.py  # run-level reflection over traces + transcripts -> code/evaluation/run_reflection.md
 ```
 
 ## Stage contracts
@@ -37,7 +38,8 @@ Process rules the orchestrator enforces (`orchestrator.py`): `PREREQS` (what mus
 |---|---|---|
 | Add a tool | `tools.py` (`@registry.register`, owner = worker) → `orchestrator.PREREQS` → `RulePlanner.plan` | `_config/glossary.md` |
 | Change what a worker concludes | `workers.py` `interpret()` (findings + flags) | this file |
-| Change a reflection check or the re-plan rule | `orchestrator.py` `reflect()` | `docs/AGENTIC.md` §2 |
+| Change a reflection check or the re-plan rule | `orchestrator.py` `reflect()` (span attrs follow automatically) | `docs/AGENTIC.md` §2 |
+| Change what the run-level reflection reports | `run_reflection.py` `summarise()` / `render()` | `docs/AGENTIC.md` §5 |
 | Change the gate rules | `tools.py` `score_gate` (+ `tests/test_agent.py::test_score_gate_is_exact_against_full_plan_search`) | `docs/DECISIONS.md` D14 |
 | Change what a card carries or how sections are read | `cards.py`, `store.py`, `memory.py` | `docs/DECISIONS.md` D15 |
 | Prove nothing changed | `python3 -m pytest -q tests/test_agent.py` (parity: pipeline = cards = disk) | — |

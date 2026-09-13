@@ -1,4 +1,4 @@
-# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13), account cards and score gate (D14), tables on disk (D15)
+# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13), account cards and score gate (D14), tables on disk (D15), telemetry-fed reflection (D17)
 
 How a request is served in the default runtime (`python3 code/main.py`). The legacy linear pipeline is still available with `--pipeline` and produces identical contract columns; the agentic runtime adds planning, worker reports, a reflection against the goal, and a transcript per request.
 
@@ -105,9 +105,16 @@ Every function that already existed is now a named tool with a description and a
 
 Because each tool delegates, `tests/test_agent.py::test_orchestrator_matches_linear_pipeline_on_samples` asserts the agentic row equals the linear pipeline's row on all 25 samples, explanation included.
 
-## 5. Observability and cost
+## 5. Observability, and the reflection that reads it (D17)
 
-One trace per request (`buyorwait.request`, attribute `mode=agent`), a span per planned step (`agent.step` with worker, tool, iteration, flags), `agent.plan` and `agent.reflect` spans carrying `gen_ai.*` usage when the model is used, and the existing `explain` span. `code/evaluation/build_usage_report.py` now also breaks calls down by stage. In the default configuration the only model call per request is still the explanation, so cost per request is unchanged; `--planner llm --llm-reflect` adds roughly 1.4k input and 0.5k output tokens per request.
+One trace per request (`buyorwait.request`, attributes: final status, method, confidence, iterations, tool calls, recall source, gate route), an `agent.plan` span, an `agent.step` span per tool call (worker, tool, iteration, ok, flags raised), an **`agent.reflect` span per iteration** carrying the seven goal checks as `check.<name>` booleans, the concerns, the confidence and whether a re-plan follows, an `agent.critique` span for the optional model critique, and the `explain` span with `gen_ai.*` usage. Spans go to `.cache/traces.jsonl` (OTLP export when `OTEL_EXPORTER_OTLP_ENDPOINT` is set); findings and ledgers go to `.cache/agent_transcripts.jsonl`.
+
+Two feedback loops turn that telemetry into reflection rather than a log:
+
+- **Within a run, across requests.** The orchestrator keeps a run log of every reflection by user. When a later request in the same run belongs to a user whose earlier request needed a re-plan or ended with low confidence, the reflection adds the concern `an earlier request in this run (<id>) needed a re-plan` and caps confidence at medium. Contract columns never change; the packet and the explanation do. Users and requests are one-to-one in this dataset, so the loop is exercised by `tests/test_agent.py::test_run_level_feedback_lowers_confidence_for_a_repeat_user`.
+- **After the run.** `agent/run_reflection.py` reads the trace and transcript files and writes `code/evaluation/run_reflection.md` (automatically after every full run; `python3 code/evaluation/build_run_reflection.py` rebuilds it): outcomes by status × confidence, gate and recall rates, iterations and re-plans, tool calls and wall time per request, which reflection checks failed and how often, concern and flag frequencies, where the time goes per tool, the re-planned requests, and every low-confidence request with its concerns. Measured on the 250 evaluation requests: 19.9 tool calls and 17 ms per request, 55 gated, 0 re-plans, confidence high 19 / medium 182 / low 49, the dominant concern being thin headroom (74% of requests) and 15 decisions that would change without message evidence.
+
+`code/evaluation/build_usage_report.py` breaks model calls down by stage (explanation, planning, critique). In the default configuration the only model call per request is still the explanation, so cost per request is unchanged; `--planner llm --llm-reflect` adds roughly 1.4k input and 0.5k output tokens per request.
 
 ## 6. Running
 
@@ -119,5 +126,6 @@ python3 code/main.py --pipeline                        # legacy linear pipeline 
 python3 code/main.py --build-cards                     # rebuild the account cards (loads the dataset once, then drops it)
 python3 code/main.py --load-dataset                    # keep the full tables in RAM at request time (default: cards in RAM, tables on disk)
 python3 code/main.py --no-cards                        # recall from the dataset instead of cards (same output)
+python3 code/evaluation/build_run_reflection.py         # rebuild code/evaluation/run_reflection.md from the last full run
 python3 -m pytest -q tests/test_agent.py
 ```

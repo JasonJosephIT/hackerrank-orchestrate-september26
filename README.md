@@ -22,6 +22,7 @@ python3 code/main.py --samples       # dataset/sample_requests.csv -> code/evalu
 python3 code/evaluation/score_samples.py          # per-field match against the 25 solved samples
 python3 code/buyorwait/verify.py output.csv       # standalone contract validator (also runs inside main.py)
 python3 code/evaluation/build_usage_report.py     # evaluation/usage_report.md from the run's OpenTelemetry spans
+python3 code/evaluation/build_run_reflection.py   # evaluation/run_reflection.md: what the orchestrator did across the run (also written after every full run)
 python3 code/main.py --explain request_42         # agent transcript (goal, plan, findings, reflection) + decision packet for one request
 python3 code/main.py --planner llm --llm-reflect  # opt-in: Groq proposes the tool plan and critiques the decision (advisory only)
 python3 code/main.py --pipeline                   # legacy linear pipeline (same contract columns; parity oracle in tests)
@@ -81,4 +82,4 @@ output.csv                        predictions for dataset/requests.csv
 
 ## Observability
 
-Every run writes `.cache/traces.jsonl` (one JSON span per line: one trace per request, a span per orchestrator step with worker/tool/flags, `gen_ai.*` usage on model calls) and, on a full run, `.cache/agent_transcripts.jsonl` (goal, plan, findings, reflections and ledger per request). Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also export OTLP/HTTP to Tempo, Jaeger, Honeycomb, etc. `BUYORWAIT_TRACING=0` disables tracing.
+Every run writes `.cache/traces.jsonl` (one JSON span per line: one trace per request, a span per orchestrator step with worker/tool/flags, an `agent.reflect` span per iteration with the goal checks and confidence, `gen_ai.*` usage on model calls) and, on a full run, `.cache/agent_transcripts.jsonl` (goal, plan, findings, reflections and ledger per request). Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also export OTLP/HTTP to Tempo, Jaeger, Honeycomb, etc. `BUYORWAIT_TRACING=0` disables tracing.
