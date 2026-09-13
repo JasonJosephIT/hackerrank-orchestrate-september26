@@ -55,3 +55,69 @@ def test_reliability_and_commitment_move_together(monkeypatch):
     assert on["_trusted_income"] < on["_monthly_income"]
     # the rent is an established habit: its commitment weight drops below face value
     assert on["commitment_load"] > 100 * (1 - 400 / on["_trusted_income"]) - 1e-6 or on["commitment_load"] >= 0
+
+
+class _Chg:
+    """Minimal duck-typed stand-in for plans.Change -- score.py only reads these three fields."""
+    def __init__(self, kind, event_id, new_amount=None):
+        self.kind, self.event_id, self.new_amount = kind, event_id, new_amount
+
+
+def test_exclude_and_override_move_more_than_just_liquidity():
+    """D13: before this change, stop/reduce only ever showed up in the trough (liquidity_buffer);
+    commitment_load/flexibility/savings_behaviour ignored exclude/overrides entirely."""
+    flexible = _rec(300, 0, 6, [300] * 6, flex="stoppable", eid="sub")
+    fixed = _rec(1000, 0, 6, [1000] * 6, flex="fixed", eid="rent")
+    st = _state([flexible, fixed])
+    base = S.components(st)
+    stopped = S.components(st, exclude={"sub"})
+    reduced = S.components(st, overrides={"sub": 100.0})
+    assert stopped["_monthly_outflow"] == pytest.approx(base["_monthly_outflow"] - 300, abs=0.01)
+    assert reduced["_monthly_outflow"] == pytest.approx(base["_monthly_outflow"] - 200, abs=0.01)
+    assert stopped["flexibility"] < base["flexibility"]
+    # the baseline (no exclude/overrides passed) is unchanged -- this is purely additive
+    assert S.components(st) == base
+
+
+def test_change_impact_and_payment_impact_move_the_expected_sub_components():
+    """The composite's overall sign can go either way (a flexibility-ratio component can move against
+    a cut -- see docs), but the mechanically guaranteed pieces must hold: freeing cash flow can only
+    help liquidity/savings, and an added payment can only hurt liquidity."""
+    salary = _rec(2000, 0, 6, [2000] * 6, direction="credit", eid="sal")
+    fixed = _rec(1000, 0, 6, [1000] * 6, flex="fixed", eid="rent")
+    flexible = _rec(300, 0, 6, [300] * 6, flex="stoppable", eid="sub")
+    st = _state([salary, fixed, flexible])
+    ci = S.change_impact(st, _Chg("stop", "sub"))
+    assert ci["delta"]["savings_behaviour"] >= 0
+    assert ci["delta"]["liquidity_buffer"] >= 0
+    pi = S.payment_impact(st, [(st.request_date, 10000.0)])
+    assert pi["delta"]["liquidity_buffer"] <= 0
+    assert pi["composite_delta"] <= 0
+
+
+def test_with_changes_ranks_by_score_match_not_raw_dollar_saving(monkeypatch):
+    """Plumbing test: with_changes() must rank candidates by how closely score.change_impact's
+    composite_delta offsets score.payment_impact's hit, using score.py -- not simply cheapest-first --
+    with raw dollar saving only as the tie-break. Impact numbers are controlled here so the test does
+    not depend on the score formula's real arithmetic, only on with_changes()'s selection logic."""
+    import buyorwait.plans as P
+
+    tiny = P.Change("stop", "tiny", "c", "tiny sub", None, 10.0)     # cheapest in dollars
+    big = P.Change("stop", "big", "c", "big sub", None, 500.0)      # best score match, chosen first
+
+    def fake_payment_impact(state, payments, before=None):
+        return {"composite_delta": -50.0}
+
+    def fake_change_impact(state, change, before=None):
+        return {"composite_delta": {"tiny": 2.0, "big": 48.0}[change.event_id]}
+
+    def fake_is_safe(state, pay, **kw):
+        return bool(kw.get("exclude"))  # either cut alone is "enough" in this toy scenario
+
+    monkeypatch.setattr(P.score, "payment_impact", fake_payment_impact)
+    monkeypatch.setattr(P.score, "change_impact", fake_change_impact)
+    monkeypatch.setattr(P, "is_safe", fake_is_safe)
+
+    st = _state([])
+    chosen = P.with_changes(st, [(st.request_date, 10000.0)], [tiny, big])
+    assert chosen is not None and [c.event_id for c in chosen] == ["big"]

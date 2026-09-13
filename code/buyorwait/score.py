@@ -75,11 +75,24 @@ def _clip(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, x))
 
 
+def _effective_amount(r, exclude: set, overrides: dict) -> float:
+    """A recurring debit's amount after a candidate stop (0) or reduce_to (its floor) is applied;
+    unaffected recurrences (and anything with exclude/overrides empty) pass through at face value."""
+    if r.last_event_id in exclude:
+        return 0.0
+    return overrides.get(r.last_event_id, r.amount)
+
+
 def components(state: FinancialState, extra=None, exclude=None, overrides=None) -> dict:
+    exclude, overrides = exclude or set(), overrides or {}
     proj = projection(state, extra=extra, exclude=exclude, overrides=overrides)
     trough = min(low for _, _, low in proj)
     trusted_m, income_m, income_detail = trusted_income(state)
-    outflow_m = state.monthly_outflow()
+    # unlike the trough above (which already reflects exclude/overrides via projection()), these
+    # monthly-equivalent aggregates read state.recurring directly, so a candidate spending change must
+    # be threaded through explicitly for commitment/flexibility/savings to respond to it too (D13)
+    outflow_m = sum(_effective_amount(r, exclude, overrides) * (30.0 / (r.cadence_days or 30))
+                    for r in state.recurring if r.direction == "debit")
     fixed_recs = [r for r in state.recurring if r.direction == "debit" and r.flexibility == "fixed"]
     fixed_m = sum(r.amount * (30.0 / (r.cadence_days or 30)) * expense_weight(r) for r in fixed_recs)
     # a plan injected by expense_impact() (installments, partial, full) has no history: full weight
@@ -96,7 +109,8 @@ def components(state: FinancialState, extra=None, exclude=None, overrides=None) 
         volatility = _clip(100 * (1 - pstdev(var_hist) / mean(var_hist)))
     else:
         volatility = 50.0
-    flexible_m = sum(r.amount * (30.0 / (r.cadence_days or 30)) for r in state.recurring if r.direction == "debit" and r.flexibility != "fixed" and not r.protected)
+    flexible_m = sum(_effective_amount(r, exclude, overrides) * (30.0 / (r.cadence_days or 30))
+                     for r in state.recurring if r.direction == "debit" and r.flexibility != "fixed" and not r.protected)
     flexibility = _clip(100 * flexible_m / outflow_m) if outflow_m > 0 else 0.0
     inc_recs = [r for r in state.recurring if r.direction == "credit"]
     if not inc_recs:
@@ -147,11 +161,37 @@ def expense_impact(state: FinancialState, dec) -> dict:
         extra, exclude, overrides = [(dec.request.request_date, -dec.request.amount, "request")], set(), {}
     before = components(state)
     after = components(state, extra=extra, exclude=exclude, overrides=overrides)
-    delta = {k: round(after[k] - before[k], 1) for k in WEIGHTS}
+    report = _delta_report(before, after)
     headroom = max(before["_headroom"], 1e-9)
     hurt = _clip(100 * dec.request.amount / headroom) if before["_headroom"] > 0 else 100.0
     band = "fine" if after["_trough"] >= state.minimum and hurt < 50 else ("caution" if after["_trough"] >= state.minimum else "unsafe")
-    drivers = sorted(delta.items(), key=lambda kv: kv[1])[:2]
-    return {"composite_before": composite(before), "composite_after": composite(after), "delta": delta,
-            "hurt": round(hurt, 1), "band": band, "top_drivers": [k for k, _ in drivers],
+    drivers = sorted(report["delta"].items(), key=lambda kv: kv[1])[:2]
+    return {**report, "hurt": round(hurt, 1), "band": band, "top_drivers": [k for k, _ in drivers],
             "trough_after": after["_trough"]}
+
+
+def _delta_report(before: dict, after: dict) -> dict:
+    delta = {k: round(after[k] - before[k], 1) for k in WEIGHTS}
+    return {"composite_before": composite(before), "composite_after": composite(after),
+            "delta": delta, "composite_delta": round(composite(after) - composite(before), 1)}
+
+
+def payment_impact(state: FinancialState, payments: list[tuple], before: dict | None = None) -> dict:
+    """Score effect of making these payments alone, no spending changes yet (D13) -- the 'purchase
+    hit' that candidate spending changes are matched against in plans.with_changes(). Same shape as
+    expense_impact() but works from a raw payments list, usable before a Decision/Plan exists."""
+    before = before if before is not None else components(state)
+    extra = [(d, -a, "plan") for d, a in payments]
+    after = components(state, extra=extra)
+    return _delta_report(before, after)
+
+
+def change_impact(state: FinancialState, change, before: dict | None = None) -> dict:
+    """Score effect of one candidate spending change in isolation (D13): how much stopping/reducing
+    this one flexible expense would improve the Spending Score, used to pick a cut whose own impact
+    offsets a purchase's hit rather than always the smallest dollar saving."""
+    before = before if before is not None else components(state)
+    exclude = {change.event_id} if change.kind == "stop" else set()
+    overrides = {change.event_id: change.new_amount} if change.kind == "reduce_to" else {}
+    after = components(state, exclude=exclude, overrides=overrides)
+    return _delta_report(before, after)

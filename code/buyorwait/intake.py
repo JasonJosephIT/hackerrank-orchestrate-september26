@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .evidence import Fact, extract_message_facts
+from .evidence import Fact, extract_message_facts, llm_extract_facts
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DATASET = ROOT / "dataset"
@@ -216,6 +216,7 @@ DEFAULT_CFG = dict(
     outlier_ratio=3.0,           # amounts above 3x the group median are one-offs, not the recurring level
     first_gap_map={21: 14},      # sample-calibrated: a 3-week item's next occurrence lands ~2 weeks after the last one (D6)
     skip_subweekly_due_today=True,  # sample-calibrated (D11): a sub-weekly stream whose next occurrence is request_date is not projected
+    use_llm_evidence=True,       # LLM structured-output fallback (D13) for a message no regex rule matches; no-ops without GROQ_API_KEY
 )
 
 
@@ -364,8 +365,9 @@ def build_state(ds: Dataset, user_id: str, request_date: date, amount_facts: dic
         msgs = ds.messages[(ds.messages.user_id == user_id)].copy()
         if not msgs.empty:
             msgs = msgs[msgs.sent_at.map(lambda s: _d(s) <= request_date) | (msgs.request_id == (request_id or ""))]
+        fallback = llm_extract_facts if cfg["use_llm_evidence"] else None
         for m in msgs.sort_values("sent_at").itertuples():
-            facts.extend(extract_message_facts(m.message_id, m.message_text))
+            facts.extend(extract_message_facts(m.message_id, m.message_text, llm_fallback=fallback))
         _apply_facts(ds, cur, request_date, facts, income_recs, recurring, fixed, notes)
 
     recurring.extend(income_recs)
