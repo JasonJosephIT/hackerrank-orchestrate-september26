@@ -48,11 +48,12 @@
   "baseline_archetype": "salaried",
   "confidence": 0.9,
   "evidence_ids": [
-   "event_284"
+   "event_284",
+   "event_270"
   ],
-  "features_hash": "fbd7434194cbdc7a",
+  "features_hash": "04f5d192134ccddf",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability.",
+  "rationale": "Regular payroll with no variability, plus a one\u2011off bonus.",
   "source": "llm"
  },
  "user_05@2025-11-06": {
@@ -67,17 +68,17 @@
   "source": "llm"
  },
  "user_06@2026-01-03": {
-  "adjustment": -1,
+  "adjustment": 0,
   "archetype": "salaried",
   "baseline_archetype": "salaried",
-  "confidence": 0.8,
+  "confidence": 0.9,
   "evidence_ids": [
    "event_471",
    "message_04"
   ],
-  "features_hash": "d893c49031d19ecc",
+  "features_hash": "df804ec323f7af9f",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Salary is regular but currently lower than usual, indicating a temporary dip.",
+  "rationale": "Regular payroll with a temporary lower amount, still reliable.",
   "source": "llm"
  },
  "user_07@2024-09-05": {
@@ -89,23 +90,23 @@
    "event_578",
    "message_05"
   ],
-  "features_hash": "f3cad479ed6e8db3",
+  "features_hash": "c85bb6d8accd3b6a",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability, salary moved to a new date.",
+  "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
  },
  "user_08@2025-02-07": {
-  "adjustment": 0,
+  "adjustment": -1,
   "archetype": "salaried",
   "baseline_archetype": "salaried",
-  "confidence": 0.9,
+  "confidence": 0.7,
   "evidence_ids": [
    "event_643",
    "message_06"
   ],
-  "features_hash": "6edb1fb56f56aa92",
+  "features_hash": "63cb0ae199cfb905",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with minor upcoming reduction, still dependable",
+  "rationale": "Salary shows recent drop and upcoming reduction, indicating a lumpy trend.",
   "source": "llm"
  },
  "user_09@2026-07-04": {
@@ -113,10 +114,12 @@
   "archetype": "freelance",
   "baseline_archetype": "freelance",
   "confidence": 0.7,
-  "evidence_ids": [],
-  "features_hash": "af036c727aca01c8",
+  "evidence_ids": [
+   "event_746"
+  ],
+  "features_hash": "045c07047766d8c8",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular variable income with consistent cadence and median, no irregularities.",
+  "rationale": "Regular variable freelance income with consistent cadence.",
   "source": "llm"
  },
  "user_100@2024-06-06": {
@@ -261,15 +264,15 @@
  },
  "user_10@2024-12-06": {
   "adjustment": -1,
-  "archetype": "transition",
+  "archetype": "gig",
   "baseline_archetype": "transition",
-  "confidence": 0.3,
+  "confidence": 0.6,
   "evidence_ids": [
    "message_07"
   ],
-  "features_hash": "a86c8eb185692a6b",
+  "features_hash": "4c3cf076e43d6c4c",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Unconfirmed platform payout and variable pool forecast make income uncertain.",
+  "rationale": "Income consists of irregular platform payouts with pending confirmation.",
   "source": "llm"
  },
  "user_110@2025-08-06": {
@@ -412,7 +415,7 @@
  },
  "user_11@2025-05-03": {
   "adjustment": 0,
-  "archetype": "salaried_plus_variable",
+  "archetype": "salaried",
   "baseline_archetype": "salaried_plus_variable",
   "confidence": 0.9,
   "evidence_ids": [
@@ -423,9 +426,9 @@
    "event_942",
    "message_08"
   ],
-  "features_hash": "58f09c1df2f89f00",
+  "features_hash": "fb36f20178ad1913",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular salary with settled commissions",
+  "rationale": "Regular base salary with no ongoing variable income streams.",
   "source": "llm"
  },
  "user_120@2026-04-06": {
@@ -564,16 +567,16 @@
   "source": "llm"
  },
  "user_12@2026-04-05": {
-  "adjustment": -2,
+  "adjustment": -1,
   "archetype": "transition",
   "baseline_archetype": "transition",
-  "confidence": 0.3,
+  "confidence": 0.6,
   "evidence_ids": [
    "message_09"
   ],
-  "features_hash": "0c4e17fbd7f8017e",
+  "features_hash": "3833a1d19b247504",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Employment ended, no salary forecast, variable pool uncertain",
+  "rationale": "Employment ended, variable income only, no steady salary.",
   "source": "llm"
  },
  "user_130@2024-12-06": {
@@ -720,9 +723,9 @@
    "event_1087",
    "event_1161"
   ],
-  "features_hash": "63b71af2cdcb3d38",
+  "features_hash": "229b12f0cf504b98",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular salary with scheduled confirmation",
+  "rationale": "Regular salary with scheduled confirmation, no variability.",
   "source": "llm"
  },
  "user_140@2025-02-06": {
@@ -861,7 +864,7 @@
   "source": "llm"
  },
  "user_14@2025-08-04": {
-  "adjustment": 1,
+  "adjustment": 0,
   "archetype": "salaried",
   "baseline_archetype": "transition",
   "confidence": 0.9,
@@ -869,9 +872,9 @@
    "event_1170",
    "message_10"
   ],
-  "features_hash": "4abbf7ef89121998",
+  "features_hash": "15bacbc34c4d395b",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular salary resumed with consistent payments",
+  "rationale": "Regular salary resumed after leave, consistent payroll pattern.",
   "source": "llm"
  },
  "user_150@2026-01-06": {
@@ -1011,16 +1014,16 @@
  },
  "user_15@2026-01-06": {
   "adjustment": 0,
-  "archetype": "salaried",
+  "archetype": "transition",
   "baseline_archetype": "transition",
   "confidence": 0.9,
   "evidence_ids": [
    "event_1265",
    "message_11"
   ],
-  "features_hash": "fa9f2db17f4a2a26",
+  "features_hash": "4222353872aa5076",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability, first salary confirmed.",
+  "rationale": "Regular payroll with confirmed salary, no variability concerns.",
   "source": "llm"
  },
  "user_160@2024-06-06": {
@@ -1168,10 +1171,12 @@
   "archetype": "salaried",
   "baseline_archetype": "salaried",
   "confidence": 0.9,
-  "evidence_ids": [],
-  "features_hash": "52f5ee1d6a10c5b8",
+  "evidence_ids": [
+   "event_1364"
+  ],
+  "features_hash": "91ef5a89cb6d6841",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll credit with no variability",
+  "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
  },
  "user_170@2025-08-06": {
@@ -1313,9 +1318,9 @@
    "event_1471",
    "event_1546"
   ],
-  "features_hash": "ad2646b72c47875c",
+  "features_hash": "573b9c37299f04bb",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with scheduled next payment",
+  "rationale": "Regular payroll with scheduled next payment.",
   "source": "llm"
  },
  "user_180@2026-07-06": {
@@ -1457,9 +1462,9 @@
   "evidence_ids": [
    "event_1571"
   ],
-  "features_hash": "a2a26bad5995c9df",
+  "features_hash": "f6397a29e79db5a7",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability",
+  "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
  },
  "user_190@2024-12-06": {
@@ -1606,7 +1611,7 @@
   "evidence_ids": [
    "event_1654"
   ],
-  "features_hash": "093840a7efeb7fd5",
+  "features_hash": "e6858a8be83713b2",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
@@ -1749,9 +1754,9 @@
   "evidence_ids": [
    "event_1733"
   ],
-  "features_hash": "3f11a4a0d0268eeb",
+  "features_hash": "dce85050e3d8c3f0",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll credit every cycle with no variability",
+  "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
  },
  "user_210@2026-04-06": {
@@ -1897,7 +1902,7 @@
    "event_1812",
    "event_1858"
   ],
-  "features_hash": "9a9776ece3dd515b",
+  "features_hash": "40d5e14944a9efcf",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll with scheduled next payment",
   "source": "llm"
@@ -2043,7 +2048,7 @@
   "evidence_ids": [
    "event_1887"
   ],
-  "features_hash": "840f22db2d901890",
+  "features_hash": "eb2f16b58f9e7e42",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
@@ -2190,7 +2195,7 @@
   "evidence_ids": [
    "event_1994"
   ],
-  "features_hash": "0722713ec04d53d1",
+  "features_hash": "043171019c1be038",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
@@ -2340,7 +2345,7 @@
   "evidence_ids": [
    "event_2075"
   ],
-  "features_hash": "d16a403468025087",
+  "features_hash": "1e67ad74b9d33c5a",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
@@ -2480,9 +2485,9 @@
    "event_2199",
    "event_2288"
   ],
-  "features_hash": "42b2bdfefbe98768",
+  "features_hash": "2afcadf1524e36a9",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with scheduled confirmation",
+  "rationale": "Regular international payroll with scheduled next payment.",
   "source": "llm"
  },
  "user_260@2025-02-06": {
@@ -2609,7 +2614,7 @@
   "source": "llm"
  },
  "user_26@2025-08-03": {
-  "adjustment": 1,
+  "adjustment": 0,
   "archetype": "freelance",
   "baseline_archetype": "freelance",
   "confidence": 0.7,
@@ -2617,9 +2622,9 @@
    "event_2318",
    "message_18"
   ],
-  "features_hash": "43d594ca854d55dd",
+  "features_hash": "bac25e1f5bd062a2",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Freelance income with variable amounts but a confirmed invoice indicates reliable cash flow.",
+  "rationale": "Regular variable freelance income with moderate consistency.",
   "source": "llm"
  },
  "user_270@2026-07-06": {
@@ -2708,47 +2713,50 @@
   "evidence_ids": [
    "message_19"
   ],
-  "features_hash": "6578d76a033a917a",
+  "features_hash": "acf1ccdafdcc0ebc",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Pending platform payout, no confirmed income stream.",
+  "rationale": "Unconfirmed platform payouts and no regular salary, indicating uncertain income.",
   "source": "llm"
  },
  "user_28@2024-06-07": {
   "adjustment": 0,
   "archetype": "salaried",
   "baseline_archetype": "salaried",
-  "confidence": 0.95,
+  "confidence": 0.9,
   "evidence_ids": [
    "event_2507",
+   "event_2508",
    "message_20"
   ],
-  "features_hash": "34be90a255453fc5",
+  "features_hash": "f4a19ec3498f2073",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability or pending changes.",
+  "rationale": "Regular payroll with consistent amounts and a single arrears payment.",
   "source": "llm"
  },
  "user_29@2025-11-04": {
   "adjustment": -2,
   "archetype": "transition",
   "baseline_archetype": "transition",
-  "confidence": 0.8,
+  "confidence": 0.7,
   "evidence_ids": [
    "message_21"
   ],
-  "features_hash": "a2f320d12627ff5a",
+  "features_hash": "aca78917bfc19e1c",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Employment ended with no new income source, indicating a transition period.",
+  "rationale": "Employment ended, no salary forecast, only variable pool income.",
   "source": "llm"
  },
  "user_30@2026-04-06": {
-  "adjustment": 0,
+  "adjustment": -1,
   "archetype": "freelance",
   "baseline_archetype": "freelance",
-  "confidence": 0.7,
-  "evidence_ids": [],
-  "features_hash": "e5636bc960c30e44",
+  "confidence": 0.6,
+  "evidence_ids": [
+   "event_2690"
+  ],
+  "features_hash": "1f3a27343e74ba79",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular variable income with consistent cadence and median, no irregularities.",
+  "rationale": "Freelance income is irregular with variable amounts.",
   "source": "llm"
  },
  "user_31@2024-09-03": {
@@ -2760,23 +2768,23 @@
    "event_2761",
    "event_2831"
   ],
-  "features_hash": "475d7b22ab41ff58",
+  "features_hash": "33b555c51771d9db",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll with scheduled next payment.",
   "source": "llm"
  },
  "user_32@2025-02-05": {
   "adjustment": 0,
-  "archetype": "salaried",
+  "archetype": "transition",
   "baseline_archetype": "transition",
   "confidence": 0.9,
   "evidence_ids": [
    "event_2857",
    "message_22"
   ],
-  "features_hash": "4af64e70b246dc10",
+  "features_hash": "996b966eee8b046a",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability, first salary confirmed.",
+  "rationale": "Regular payroll with confirmed salary, no variability concerns.",
   "source": "llm"
  },
  "user_33@2026-01-07": {
@@ -2784,8 +2792,10 @@
   "archetype": "salaried",
   "baseline_archetype": "salaried",
   "confidence": 0.9,
-  "evidence_ids": [],
-  "features_hash": "1829ee3de27e7d55",
+  "evidence_ids": [
+   "event_2962"
+  ],
+  "features_hash": "d7491af8d628a841",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
@@ -2794,14 +2804,14 @@
   "adjustment": 1,
   "archetype": "freelance",
   "baseline_archetype": "freelance",
-  "confidence": 0.7,
+  "confidence": 0.8,
   "evidence_ids": [
    "event_3081",
    "message_24"
   ],
-  "features_hash": "c5b2f1450a830ce8",
+  "features_hash": "c753b2f328123858",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Freelance income with confirmed invoice, variable but dependable.",
+  "rationale": "Regular invoices with confirmed payments indicate dependable freelance income.",
   "source": "llm"
  },
  "user_35@2025-10-30": {
@@ -2812,7 +2822,7 @@
   "evidence_ids": [
    "event_3159"
   ],
-  "features_hash": "dd856c27852b98b1",
+  "features_hash": "6e29ccd36e690cf1",
   "model": "openai/gpt-oss-20b",
   "rationale": "Regular payroll credit with no variability.",
   "source": "llm"
@@ -2826,9 +2836,9 @@
    "event_3256",
    "message_26"
   ],
-  "features_hash": "cfda862fc540eaa1",
+  "features_hash": "8fd0fe5e34e338d3",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with confirmed salary increase.",
+  "rationale": "Regular payroll with consistent amounts and a confirmed salary increase.",
   "source": "llm"
  },
  "user_37@2024-03-05": {
@@ -2838,11 +2848,12 @@
   "confidence": 0.9,
   "evidence_ids": [
    "event_3335",
+   "event_3336",
    "message_27"
   ],
-  "features_hash": "e34d198d6d673ae4",
+  "features_hash": "3405abe2d1abc54d",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with consistent amounts and no variability.",
+  "rationale": "Regular payroll with a one\u2011off arrears payment, no variability.",
   "source": "llm"
  },
  "user_38@2025-08-07": {
@@ -2851,11 +2862,12 @@
   "baseline_archetype": "salaried",
   "confidence": 0.9,
   "evidence_ids": [
-   "event_3441"
+   "event_3441",
+   "event_3491"
   ],
-  "features_hash": "dd53dc485c1aadf5",
+  "features_hash": "d94f211bbf29307f",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll credit with no variability.",
+  "rationale": "Regular payroll credit with no variability, plus a one\u2011off prize.",
   "source": "llm"
  },
  "user_39@2026-04-04": {
@@ -2867,23 +2879,23 @@
    "event_3524",
    "event_3611"
   ],
-  "features_hash": "539e71cf7e0b9a19",
+  "features_hash": "29fe2be1e4362cd0",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with scheduled next payment confirms stable income.",
+  "rationale": "Regular payroll with scheduled next payment.",
   "source": "llm"
  },
  "user_40@2024-06-06": {
   "adjustment": 0,
-  "archetype": "salaried",
+  "archetype": "transition",
   "baseline_archetype": "transition",
   "confidence": 0.9,
   "evidence_ids": [
    "event_3637",
    "message_29"
   ],
-  "features_hash": "018cbc687c3360f3",
+  "features_hash": "4e5326c6c250d771",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with consistent amounts and confirmed salary start.",
+  "rationale": "Regular payroll with confirmed first salary, no variability beyond baseline.",
   "source": "llm"
  },
  "user_41@2025-11-03": {
@@ -2895,9 +2907,9 @@
    "event_3744",
    "event_3833"
   ],
-  "features_hash": "d39c2bfc698a21f2",
+  "features_hash": "1e6c9581e611eaad",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular international payroll with scheduled confirmation.",
+  "rationale": "Regular international payroll with scheduled next payment.",
   "source": "llm"
  },
  "user_42@2026-01-05": {
@@ -2909,23 +2921,23 @@
    "event_3870",
    "message_30"
   ],
-  "features_hash": "c183eba1afd023e0",
+  "features_hash": "1fd1ae57ae1b7787",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular salary with no variability, despite a higher stated amount.",
+  "rationale": "Regular salary with no variability, no new income streams.",
   "source": "llm"
  },
  "user_43@2024-09-07": {
-  "adjustment": 0,
-  "archetype": "salaried",
+  "adjustment": 1,
+  "archetype": "transition",
   "baseline_archetype": "transition",
   "confidence": 0.9,
   "evidence_ids": [
    "event_3973",
    "message_31"
   ],
-  "features_hash": "70e269075fb4d89f",
+  "features_hash": "0d9976ec824676a4",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with no variability, consistent salary paid.",
+  "rationale": "New employer payroll confirmed, previous payroll ended, steady new salary pattern.",
   "source": "llm"
  },
  "user_44@2025-02-04": {
@@ -2937,9 +2949,9 @@
    "event_4041",
    "message_32"
   ],
-  "features_hash": "1f933e905997d3af",
+  "features_hash": "379ee2b1e3d72f88",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with consistent amounts.",
+  "rationale": "Regular payroll with consistent amounts and confirmed salary.",
   "source": "llm"
  },
  "user_45@2026-07-06": {
@@ -2965,9 +2977,9 @@
    "event_4219",
    "event_4292"
   ],
-  "features_hash": "71a470f085121cfb",
+  "features_hash": "d3a306ecee4c71a3",
   "model": "openai/gpt-oss-20b",
-  "rationale": "Regular payroll with scheduled next payment, no variability.",
+  "rationale": "Regular payroll with scheduled next payment.",
   "source": "llm"
  },
  "user_47@2025-05-05": {

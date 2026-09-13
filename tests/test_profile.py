@@ -60,3 +60,19 @@ def test_profile_adjustment_is_capped_in_the_score():
     assert components(st)["income_reliability"] == base - 10
     st.profile = {"archetype": "salaried", "adjustment": 7}   # anything beyond ±2 is clamped
     assert components(st)["income_reliability"] == min(100.0, base + 10)
+
+
+def test_stale_cache_entry_beats_the_rules_fallback(monkeypatch):
+    from datetime import date
+    import pandas as pd
+    from buyorwait import profile as P
+    from buyorwait.intake import FinancialState
+    st = FinancialState(user_id="u", request_date=date(2026, 1, 1), currency="EUR", balance=1, minimum=0,
+                        recurring=[], fixed_flows=[], notes=[], facts=[], events=pd.DataFrame())
+    monkeypatch.setattr(P, "_call", lambda f, base, client=None: (None, {"model": "m", "input_tokens": 0, "output_tokens": 0, "error": "daily token limit reached for this model"}))
+    cache = {"u@2026-01-01": {"archetype": "freelance", "adjustment": 1, "source": "llm", "features_hash": "old", "rationale": "x", "evidence_ids": []}}
+    prof, usage = P.account_profile(st, cache=cache)
+    assert prof["archetype"] == "freelance" and prof["adjustment"] == 1 and prof["source"] == "llm-stale" and usage["stale_cache"]
+    assert cache["u@2026-01-01"]["source"] == "llm"          # the cache itself is not rewritten with the stale copy
+    prof, usage = P.account_profile(st, cache={})
+    assert prof["source"] == "rules" and prof["adjustment"] == 0   # nothing cached: rules baseline

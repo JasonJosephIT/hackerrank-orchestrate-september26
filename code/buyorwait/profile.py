@@ -195,6 +195,12 @@ def account_profile(state: FinancialState, client=None, cache: dict | None = Non
     ok = validate(text, f) if text else None
     if ok:
         profile.update(ok, source="llm", model=MODEL)
+    elif cache is not None and cache.get(key, {}).get("source") == "llm":
+        # the model is unavailable (quota, network) or answered badly: an earlier answer for this user is
+        # better than none; it stays marked stale and is refreshed the next time the model is reachable
+        usage["error"] = usage.get("error") or "invalid profile JSON"
+        usage["stale_cache"] = True
+        return {**cache[key], "source": "llm-stale", "features_hash": cache[key].get("features_hash")}, usage
     else:
         usage["error"] = usage.get("error") or "invalid profile JSON; deterministic baseline kept"
     if cache is not None and ok:
