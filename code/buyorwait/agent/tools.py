@@ -17,7 +17,7 @@ from typing import Callable
 
 from ..explain import decision_packet, llm_explanation, template_explanation
 from ..forecast import HORIZON_DAYS, amount_safe_today, earliest_full_payment_date, is_safe, projection
-from ..plans import Change, Decision, Plan, candidate_changes, enumerate_plans
+from ..plans import Change, Decision, Plan, candidate_changes, choose, decide_for, enumerate_plans_for
 from ..render import render_row
 from ..score import expense_impact, spending_score
 from ..verify import verify_rows
@@ -134,11 +134,12 @@ def recall_user_history(mem: UserMemory, use_messages: bool = True) -> dict:
     mem.put("change_candidates", candidate_changes(st, mem.profile))
     debits = [r for r in st.recurring if r.direction == "debit"]
     credits = [r for r in st.recurring if r.direction == "credit"]
-    return dict(currency=st.currency, balance=st.balance, minimum_balance_to_keep=st.minimum,
+    src = mem.get("recall_source")
+    return dict(source=src, currency=st.currency, balance=st.balance, minimum_balance_to_keep=st.minimum,
                 recurring_debits=len(debits), recurring_credits=len(credits), reserved_flows=len(st.fixed_flows),
                 facts=len(st.facts), notes=st.notes[:6], monthly_income=round(st.monthly_income(), 2),
                 monthly_outflow=round(st.monthly_outflow(), 2),
-                summary=f"{st.currency} balance {st.balance:,.2f} (keep {st.minimum:,.2f}); {len(debits)} recurring debits, "
+                summary=f"[{src}] {st.currency} balance {st.balance:,.2f} (keep {st.minimum:,.2f}); {len(debits)} recurring debits, "
                         f"{len(credits)} income streams, {len(st.fixed_flows)} reserved flows, {len(st.facts)} evidence facts")
 
 
@@ -233,12 +234,12 @@ def tool_earliest(mem: UserMemory) -> dict:
     method accepted, installment count within max_installment_months, partial payment allowed.""",
     None, owner="planner")
 def list_payment_options(mem: UserMemory) -> dict:
-    ds, req, prof = mem.long_term.ds, mem.request, mem.profile
+    req, prof = mem.request, mem.profile
     methods = set(str(prof.payment_methods_user_will_consider).split("|"))
     mm = prof.max_installment_months
     max_months = int(float(mm)) if str(mm).strip() else None
     opts = []
-    for o in ds.options[ds.options.request_id == req.request_id].itertuples():
+    for o in mem.options.itertuples():
         reasons = []
         if o.payment_method not in methods:
             reasons.append("method not accepted by user")
@@ -270,7 +271,7 @@ def tool_candidate_changes(mem: UserMemory) -> dict:
     each eligible installment option with/without changes) and keep the ones that are safe.""", None, owner="planner")
 def tool_enumerate(mem: UserMemory) -> dict:
     st, req = mem.require("state"), mem.request
-    plans = enumerate_plans(mem.long_term.ds, st, req, mem.require("safe_today"), mem.require("earliest"))
+    plans = enumerate_plans_for(mem.profile, mem.options, st, req, mem.require("safe_today"), mem.require("earliest"))
     mem.put("candidates", plans)
     return dict(candidates=[_plan_view(p, req.deadline) for p in plans], summary=f"{len(plans)} safe candidate plan(s)")
 
@@ -301,21 +302,55 @@ def check_plan_safety(mem: UserMemory, payments: list, changes: list | None = No
 def rank_and_choose(mem: UserMemory, exclude: list | None = None) -> dict:
     req, st = mem.request, mem.require("state")
     plans = [p for p in mem.require("candidates") if not exclude or (p.method not in exclude and p.option_id not in exclude)]
-    plans.sort(key=lambda p: p.rank_key(req.deadline))
-    best = plans[0] if plans else None
-    if best is None:
-        status, method = "not_affordable", "not_recommended"
-    elif best.method == "full_payment" and not best.changes:
-        status, method = "affordable_now", "full_payment"
-    elif best.method == "wait":
-        status, method = "affordable_later", "wait"
-    else:
-        status, method = "affordable_with_plan", best.method
-    dec = Decision(req, mem.require("safe_today"), mem.require("earliest"), best, status, method, plans, st)
+    dec = choose(plans, req, st, mem.require("safe_today"), mem.require("earliest"))
     mem.put("decision", dec)
-    return dict(status=status, method=method, chosen=_plan_view(best, req.deadline) if best else None,
-                rejected=[_plan_view(p, req.deadline) for p in plans[1:4]],
-                summary=f"{status} / {method}" + (f" via {best.option_id}" if best and best.option_id else ""))
+    best = dec.plan
+    return dict(status=dec.status, method=dec.method, chosen=_plan_view(best, req.deadline) if best else None,
+                rejected=[_plan_view(p, req.deadline) for p in dec.candidates[1:4]],
+                summary=f"{dec.status} / {dec.method}" + (f" via {best.option_id}" if best and best.option_id else ""))
+
+
+@registry.register("score_gate", """
+    Score gate (D14): settle the request from the card's numbers when a threshold makes the answer exact,
+    otherwise route it to the plan search. headroom = projected trough - minimum (the liquidity basis of the
+    score); hurt = requested / headroom. Rules: headroom >= requested and full payment accepted -> affordable_now
+    (paying today keeps every projected balance above the minimum, and a single full payment today wins the
+    six-rule ranking). No safe full-payment date, no eligible installment option and no permitted spending
+    change (or a baseline breach with no permitted change) -> not_affordable. Everything else -> search.""",
+    None, owner="planner")
+def score_gate(mem: UserMemory) -> dict:
+    st, req, prof = mem.require("state"), mem.request, mem.profile
+    safe_today, earliest = mem.require("safe_today"), mem.require("earliest")
+    proj = mem.get("projection") or projection(st)
+    trough = min(low for _, _, low in proj)
+    headroom = round(trough - st.minimum, 2)
+    hurt = round(100.0 * req.amount / headroom, 1) if headroom > 0 else None
+    methods = set(str(prof.payment_methods_user_will_consider).split("|"))
+    opts = mem.get("options")
+    if opts is None:
+        opts = list_payment_options(mem)["options"]
+    eligible_installments = [o["option_id"] for o in opts if o["eligible"] and o["method"] == "installments"]
+    cands = mem.get("change_candidates") or []
+    route, rule = "search", None
+    if "full_payment" in methods and safe_today >= req.amount - 1e-9:
+        route, rule = "affordable_now", f"headroom {headroom:,.2f} >= requested {req.amount:,.2f} (hurt {hurt}) and full payment accepted"
+        plans = [Plan("full_payment", [(req.request_date, req.amount)], total_paid=req.amount, safe=True)]
+    elif earliest is None and not eligible_installments and not cands:
+        route, rule = "not_affordable", "no safe full-payment date in the window, no eligible installment option, no permitted spending change"
+        plans = []
+    elif headroom < 0 and not cands:
+        route, rule = "not_affordable", f"baseline breach (headroom {headroom:,.2f}) and no permitted spending change"
+        plans = []
+    out = dict(route=route, rule=rule, headroom=headroom, hurt=hurt, composite=(mem.get("score") or {}).get("composite"),
+               eligible_installments=eligible_installments, permitted_changes=len(cands))
+    mem.put("gate", out)
+    if route != "search":
+        mem.put("candidates", plans)
+        mem.put("decision", choose(plans, req, st, safe_today, earliest))
+        out["summary"] = f"gate -> {route}: {rule}; plan search skipped"
+    else:
+        out["summary"] = f"gate -> search (headroom {headroom:,.2f}, hurt {hurt}, {len(eligible_installments)} eligible installment option(s), {len(cands)} permitted change(s))"
+    return out
 
 
 # ------------------------------------------------------------------------------------------
@@ -348,12 +383,9 @@ def tool_expense_impact(mem: UserMemory) -> dict:
     Factor, bands). Cross-user, vectorised, cached for the run; informs confidence, never a contract column.""",
     None, owner="scorer")
 def tool_account_factors(mem: UserMemory) -> dict:
-    tbl = mem.long_term.account_factors()
-    if mem.request.user_id not in tbl.index:
+    out = mem.factors()
+    if out is None:
         return dict(summary="no factor row for user")
-    row = tbl.loc[mem.request.user_id]
-    out = dict(spending_factor=float(row.spending_factor), spending_band=str(row.spending_band),
-               stability_factor=float(row.stability_factor), stability_band=str(row.stability_band))
     mem.put("factors", out)
     return dict(**out, summary=f"spending {out['spending_factor']} ({out['spending_band']}), stability {out['stability_factor']} ({out['stability_band']})")
 
@@ -381,13 +413,12 @@ def audit_output_row(mem: UserMemory) -> dict:
     confidence and the explanation names the dependency. Never changes the delivered decision.""",
     None, owner="auditor")
 def counterfactual_without_messages(mem: UserMemory) -> dict:
-    from ..plans import decide
     st_base = mem.require("state")
     dec = mem.require("decision")
     if not st_base.facts:
         return dict(depends_on_messages=False, summary="no message facts applied; counterfactual skipped")
     st_cf = mem.recall(use_messages=False)
-    dec_cf = decide(mem.long_term.ds, st_cf, mem.request)
+    dec_cf = decide_for(mem.profile, mem.options, st_cf, mem.request)
     diff = {k: (a, b) for k, a, b in (("status", dec.status, dec_cf.status), ("method", dec.method, dec_cf.method),
                                        ("amount_safe_to_pay", dec.safe_today, dec_cf.safe_today))
             if a != b}

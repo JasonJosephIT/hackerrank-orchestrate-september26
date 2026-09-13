@@ -2,11 +2,12 @@
 
 Three tiers, all keyed to one user and one request:
 
-* long-term  — the dataset loaded once per process (`Dataset`), read-only, shared by every request;
-               plus the cross-user account factors table, computed lazily once and cached.
-* episodic   — the user's financial history recalled *at request time*: `build_state` filters the
-               event, message and image evidence for this user as of `request_date`. Nothing from other
-               users, nothing dated after the request (except messages tied to the request itself).
+* long-term  — the account cards (`CardStore`, D14): one compact card per user as of the request date,
+               built once by the deterministic intake + score layers, ~0.5 MB for all users. The raw
+               dataset (~21 MB) is only needed to build cards; once they exist it can be dropped.
+* episodic   — the user's card recalled *at request time* (or, without cards, `build_state` over the
+               dataset): only this user's history, cut at `request_date`. Nothing from other users,
+               nothing dated after the request (except messages tied to the request itself).
 * working    — the scratchpad the orchestrator and its workers write to while handling the request:
                projection, candidate plans, decision, scores, audit, reflection. Cleared per request.
 
@@ -19,8 +20,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+import pandas as pd
+
 from ..intake import Dataset, FinancialState, build_state
 from ..plans import Request
+from .cards import AccountCard, CardStore
 
 
 @dataclass
@@ -36,20 +40,29 @@ class LedgerEntry:
 
 @dataclass
 class LongTermMemory:
-    """Process-wide, read-only. One instance per run."""
-    ds: Dataset
+    """Process-wide, read-only. One instance per run. With `cards` set, `ds` may be None."""
+    ds: Dataset | None
     image_facts: dict[str, float]
     verify_context: dict | None = None   # verify.load_context(...) for the auditor
+    cards: CardStore | None = None
     _factors: Any = None      # pandas DataFrame from factors.account_factors, computed on first use
 
     def account_factors(self):
         if self._factors is None:
+            if self.ds is None:
+                raise RuntimeError("no dataset loaded; account factors come from the card")
             from ..factors import account_factors
             self._factors = account_factors(self.ds)
         return self._factors
 
     def profile(self, user_id: str):
+        if self.ds is None:
+            raise RuntimeError("no dataset loaded; the profile comes from the card")
         return self.ds.profiles.loc[user_id]
+
+    @property
+    def source(self) -> str:
+        return "cards" if self.cards is not None else "dataset"
 
 
 @dataclass
@@ -63,20 +76,57 @@ class UserMemory:
     _seq: int = 0
 
     # ---- episodic recall -------------------------------------------------------------
-    def recall(self, use_messages: bool = True, request_date: date | None = None) -> FinancialState:
-        """Retrieve this user's history as of the request date. Only the user's own rows are read;
-        settled history before request_date drives recurrence, pending/scheduled rows are reserved,
-        messages are those sent on or before request_date or tied to this request."""
-        st = build_state(self.long_term.ds, self.request.user_id, request_date or self.request.request_date,
-                         self.long_term.image_facts, cfg={"use_messages": use_messages},
-                         request_id=self.request.request_id)
-        if use_messages and request_date is None:
+    @property
+    def card(self) -> AccountCard | None:
+        if self.long_term.cards is None:
+            return None
+        return self.long_term.cards.get(self.request.user_id, self.request.request_date, self.request.request_id)
+
+    def recall(self, use_messages: bool = True) -> FinancialState:
+        """Retrieve this user's history as of the request date: from the account card when one exists,
+        else rebuilt from the dataset. Only the user's own rows; settled history before request_date drives
+        recurrence, pending/scheduled rows are reserved, messages are those sent on or before request_date
+        or tied to this request."""
+        card = self.card
+        if card is not None:
+            st = card.to_state(use_messages=use_messages)
+            self.put("recall_source", "card")
+        else:
+            if self.long_term.ds is None:
+                raise RuntimeError(f"no card for {self.request.user_id}@{self.request.request_date} and no dataset loaded")
+            st = build_state(self.long_term.ds, self.request.user_id, self.request.request_date,
+                             self.long_term.image_facts, cfg={"use_messages": use_messages},
+                             request_id=self.request.request_id)
+            self.put("recall_source", "dataset")
+        if use_messages:
             self.state = st
         return st
 
     @property
-    def profile(self):
-        return self.long_term.profile(self.request.user_id)
+    def profile(self) -> pd.Series:
+        card = self.card
+        return card.profile_row() if card is not None else self.long_term.profile(self.request.user_id)
+
+    @property
+    def options(self) -> pd.DataFrame:
+        """The seller/provider options supplied for this request."""
+        card = self.card
+        if card is not None:
+            return card.options_frame()
+        ds = self.long_term.ds
+        return ds.options[ds.options.request_id == self.request.request_id]
+
+    def factors(self) -> dict | None:
+        """This user's two-factor profile: from the card, else the cross-user table."""
+        card = self.card
+        if card is not None:
+            return card.factors
+        tbl = self.long_term.account_factors()
+        if self.request.user_id not in tbl.index:
+            return None
+        row = tbl.loc[self.request.user_id]
+        return dict(spending_factor=float(row.spending_factor), spending_band=str(row.spending_band),
+                    stability_factor=float(row.stability_factor), stability_band=str(row.stability_band))
 
     # ---- working memory ----------------------------------------------------------------
     def put(self, key: str, value: Any) -> None:

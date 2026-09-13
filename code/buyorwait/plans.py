@@ -123,7 +123,14 @@ def with_changes(state: FinancialState, payments, candidates: list[Change]) -> l
 
 
 def enumerate_plans(ds: Dataset, state: FinancialState, req: Request, safe_today: float, earliest: date | None) -> list[Plan]:
-    profile = ds.profiles.loc[req.user_id]
+    return enumerate_plans_for(ds.profiles.loc[req.user_id], ds.options[ds.options.request_id == req.request_id],
+                               state, req, safe_today, earliest)
+
+
+def enumerate_plans_for(profile, options: pd.DataFrame, state: FinancialState, req: Request, safe_today: float,
+                        earliest: date | None) -> list[Plan]:
+    """Same enumeration from a profile row and this request's option rows (what an account card carries),
+    so request time needs no dataset."""
     methods = set(str(profile.payment_methods_user_will_consider).split("|"))
     max_months = profile.max_installment_months
     max_months = int(float(max_months)) if str(max_months).strip() else None
@@ -151,7 +158,7 @@ def enumerate_plans(ds: Dataset, state: FinancialState, req: Request, safe_today
         add(Plan("partial_payment", [(req.request_date, safe_today), (earliest, round(req.amount - safe_today, 2))]))
 
     if "installments" in methods and max_months is not None:
-        opts = ds.options[(ds.options.request_id == req.request_id) & (ds.options.payment_method == "installments")]
+        opts = options[options.payment_method == "installments"]
         for o in opts.itertuples():
             if int(o.number_of_payments) > max_months:
                 continue
@@ -177,10 +184,19 @@ class Decision:
 
 
 def decide(ds: Dataset, state: FinancialState, req: Request) -> Decision:
+    return decide_for(ds.profiles.loc[req.user_id], ds.options[ds.options.request_id == req.request_id], state, req)
+
+
+def decide_for(profile, options: pd.DataFrame, state: FinancialState, req: Request) -> Decision:
     safe_today = amount_safe_today(state, req.amount)
     earliest = earliest_full_payment_date(state, req.amount)
-    plans = enumerate_plans(ds, state, req, safe_today, earliest)
-    plans.sort(key=lambda p: p.rank_key(req.deadline))
+    plans = enumerate_plans_for(profile, options, state, req, safe_today, earliest)
+    return choose(plans, req, state, safe_today, earliest)
+
+
+def choose(plans: list[Plan], req: Request, state: FinancialState, safe_today: float, earliest: date | None) -> Decision:
+    """Six-rule ranking over safe candidates; the best one sets status and method."""
+    plans = sorted(plans, key=lambda p: p.rank_key(req.deadline))
     best = plans[0] if plans else None
     if best is None:
         status, method = "not_affordable", "not_recommended"

@@ -107,3 +107,40 @@ def test_rule_planner_conditions_on_request(lt):
     steps = RulePlanner().plan(Goal.from_request(req, mem.profile), mem)
     assert [s.phase for s in steps][-3:] == ["deliver"] * 3
     assert {s.worker for s in steps} == set(WORKERS)
+
+
+# ---- D14: account cards and the score gate ---------------------------------------------------
+def test_cards_round_trip_and_serve_without_dataset(lt, tmp_path):
+    from buyorwait.agent.cards import CardStore
+    rows = list(lt.ds.samples.itertuples(index=False))
+    store = CardStore.build(lt.ds, lt.image_facts, rows)
+    path = tmp_path / "cards.jsonl"
+    store.save(path)
+    loaded = CardStore.load(path)
+    assert len(loaded) == len(rows) and loaded.stats()["avg_streams"] > 0
+    card_lt = LongTermMemory(None, lt.image_facts, verify_context=lt.verify_context, cards=loaded)   # dataset dropped
+    orch_cards, orch_ds = Orchestrator(card_lt, use_llm=False), Orchestrator(lt, use_llm=False)
+    for row in rows:
+        a, b = orch_cards.handle_row(row), orch_ds.handle_row(row)
+        assert a.row == b.row, row.request_id
+        assert a.recall_source == "card" and b.recall_source == "dataset"
+        assert a.gate["route"] == b.gate["route"]
+
+
+def test_score_gate_is_exact_against_full_plan_search(lt):
+    """Whenever the gate settles a request, the full enumeration + ranking reaches the same status and plan."""
+    from buyorwait.plans import decide
+    orch = Orchestrator(lt, use_llm=False)
+    gated = 0
+    rows = list(lt.ds.samples.itertuples(index=False)) + list(lt.ds.requests.itertuples(index=False))[:60]
+    for row in rows:
+        res = orch.handle_row(row)
+        req = request_from_row(row)
+        full = decide(lt.ds, UserMemory(lt, req).recall(), req)
+        assert res.decision.status == full.status and res.decision.method == full.method, row.request_id
+        assert (res.decision.plan.payments if res.decision.plan else None) == (full.plan.payments if full.plan else None)
+        if res.gate["route"] != "search":
+            gated += 1
+            assert res.gate["route"] == full.status
+            assert any(e["summary"].startswith("skipped") for e in res.transcript)
+    assert gated > 0

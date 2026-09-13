@@ -1,20 +1,20 @@
-# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13)
+# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13), account cards and score gate (D14)
 
 How a request is served in the default runtime (`python3 code/main.py`). The legacy linear pipeline is still available with `--pipeline` and produces identical contract columns; the agentic runtime adds planning, worker reports, a reflection against the goal, and a transcript per request.
 
-## 1. Memory: load once, recall per user at request time
+## 1. Memory: cards built once, one card recalled per request
 
 **Question asked:** are we loading all history at once, or going request by request and searching the user's history?
 
-**Answer: both, on purpose, in two tiers.**
+**Answer: neither, since D14. The raw history is read once to build one compact card per user; request time recalls the card.**
 
 | Tier | What | When | Where |
 |---|---|---|---|
-| Long-term | The eight `dataset/*.csv` files parsed once per process (25k events, 275 profiles, rates, options, messages, images) plus the cross-user two-factor table (`factors.account_factors`, computed lazily once) | process start | `agent/memory.py: LongTermMemory` |
-| Episodic | **Recall** of one user's history *as of the request date*: `build_state` filters the events to `user_id`, takes settled rows before `request_date` for recurrence, reserves pending/scheduled rows, converts foreign cash at the settlement-date rate, and applies only the messages sent on or before the request date (or tied to the request) and the cached image amounts | first step of every request | `UserMemory.recall()` → `intake.build_state` |
-| Working | The scratchpad for this request: recalled state, projection, safe amount, earliest date, candidate plans, decision, scores, audit result, counterfactual, reflection, packet, explanation | during the request, discarded after | `UserMemory.working` |
+| Long-term | **Account cards** (`CardStore`): one card per user as of the request date, built once by the deterministic intake + score layers: profile preferences, the reconstructed state (balance, minimum, ~10 recurring streams, reserved pending/scheduled flows, notes, facts), the same state without message facts (when facts applied), the request's supplied payment options, the Spending Score components, the user's two-factor row. Cached in `.cache/cards.jsonl`, rebuilt with `--build-cards`. The raw `dataset/*.csv` tables (~21 MB in pandas) are only needed to build cards; `--no-dataset` drops them after the build and the run still serves every request. | once per run (6 s for 275 users) | `agent/cards.py`, `agent/memory.py: LongTermMemory` |
+| Episodic | **Recall** of the user's card for this request (`UserMemory.recall()` → `AccountCard.to_state()`). Without cards (`--no-cards`), the same recall runs `intake.build_state` over the dataset: only that user's rows, settled history cut at `request_date`, pending/scheduled reserved, messages sent on or before the request date or tied to the request. A card round-trips through JSON exactly, so both paths give byte-identical decisions (asserted in tests). | first step of every request | `UserMemory.recall()` |
+| Working | The scratchpad for this request: recalled state, projection, safe amount, earliest date, gate verdict, candidate plans, decision, scores, audit result, counterfactual, reflection, packet, explanation | during the request, discarded after | `UserMemory.working` |
 
-So there is no "one big context with everyone's history". The dataset is in memory because it is small and the run is offline, but every decision reads exactly one user's rows, cut at the request date. The recall is repeatable (same inputs, same state), which is what makes the rest of the run deterministic. Nothing carries over between requests: users and requests are one-to-one in this dataset, and a stateless recall is the safer default anyway (a later request must not see a later message).
+Measured: raw tables 20.9 MB in RAM; all 275 cards 2.8 MB on disk (the samples' 25 cards 247 KB), average 9.8 streams per user. Nothing carries over between requests: users and requests are one-to-one in this dataset, and a stateless recall is the safer default anyway (a later request must not see a later message). In a live product the card is what a new settled event would update.
 
 Every tool call is appended to a **ledger** on the user's memory; the ledger becomes the transcript (`.cache/agent_transcripts.jsonl` on a full run, printed by `--explain`).
 
@@ -38,6 +38,16 @@ Orchestrator.handle(request)
 **Planner.** Two modes.
 - `rules` (default): a deterministic plan conditioned on the request (e.g. the option review is phrased differently when the user only accepts full payment; the counterfactual step is always planned but skips itself when no message facts were applied). Reproducible output.
 - `llm` (`--planner llm` or `BUYORWAIT_AGENT_PLANNER=llm`): Groq (`openai/gpt-oss-120b`) receives the goal, the criteria and the tool catalogue and proposes an ordered JSON plan. `validate_plan` drops unknown tools, inserts missing prerequisites (`PREREQS`) and mandatory steps (`MANDATORY`) in dependency order, and appends the delivery steps. If the call fails or returns no JSON, the rule plan is used. Measured on `request_12`: the model proposed 10 steps, the validator inserted `rank_and_choose`, the result was identical to the rule plan's decision.
+
+**Score gate (D14).** After the forecaster and the option/change listings, the planner runs `score_gate`, which settles the request from the card's numbers when a threshold makes the answer exact and routes it to the plan search otherwise:
+
+| Route | Rule | Why it is exact |
+|---|---|---|
+| `affordable_now` | headroom (= projected trough − minimum, the liquidity basis of the score) ≥ requested amount, i.e. hurt ≤ 100, and the user accepts full payment | paying today lowers every projected balance by the amount, so the path stays above the minimum; a single full payment today then wins the six-rule ranking (no changes, lowest total, earliest start, one payment) |
+| `not_affordable` | no safe full-payment date in the window, no eligible installment option, no permitted spending change; or a baseline breach with no permitted change | every plan the rules allow needs one of those |
+| `search` | anything else | `affordable_with_plan` vs `affordable_later` depends on the supplied options, `max_installment_months`, partial permission and the deadline, which no score separates |
+
+When the gate settles the request, `enumerate_candidate_plans` and `rank_and_choose` are skipped (the ledger records it). On the 250 evaluation requests the gate settles 55 (all `affordable_now`); the other 195 go to the search. `tests/test_agent.py::test_score_gate_is_exact_against_full_plan_search` asserts the gate never disagrees with the full search. Score thresholds on the composite alone were measured and rejected: composite ≥ 65 predicts `affordable_now` on only 22 of 25 samples, and no score separates the two middle statuses.
 
 **Execute.** Each `Step` is run by its worker; the worker calls the tool through the registry (which records the ledger entry) and interprets the result into findings (prose) and flags (machine-readable). A non-optional tool error aborts the request; optional steps (listings, factors, counterfactual) may fail without consequence.
 
@@ -65,7 +75,7 @@ Concerns are added from worker flags: the decision depends on message evidence (
 |---|---|---|---|
 | historian | `recall_user_history`, `list_commitments`, `list_reserved_flows`, `list_evidence` | dataset, profile | `state`, `change_candidates`; `no_income_forecast`, `structural_deficit`, `evidence_uncertainty`, `message_facts_applied` |
 | forecaster | `project_balance`, `amount_safe_today`, `earliest_full_payment_date` | `state` | `projection`, `safe_today`, `earliest`; `baseline_breach`, `nothing_safe_today`, `no_full_payment_date` |
-| planner | `list_payment_options`, `candidate_spending_changes`, `enumerate_candidate_plans`, `rank_and_choose` | `state`, `safe_today`, `earliest`, options | `options`, `candidates`, `decision`; `no_eligible_option`, `no_safe_plan`, `not_affordable`, `misses_deadline`, `needs_spending_changes` |
+| planner | `list_payment_options`, `candidate_spending_changes`, `score_gate`, `enumerate_candidate_plans`, `rank_and_choose` | `state`, `safe_today`, `earliest`, options | `options`, `candidates`, `decision`; `no_eligible_option`, `no_safe_plan`, `not_affordable`, `misses_deadline`, `needs_spending_changes` |
 | scorer | `spending_score`, `expense_impact`, `account_factors` | `state`, `decision` | `score`, `impact`, `factors`; `impact_caution`, `impact_unsafe`, `fragile_account` |
 | auditor | `check_plan_safety`, `counterfactual_without_messages`, `audit_output_row` | `decision`, `state` | `counterfactual`, `row`, `audit_errors`; `chosen_plan_unsafe`, `depends_on_messages`, `contract_violation` |
 | explainer | `build_decision_packet`, `write_explanation` | `decision`, `score`, `impact`, `reflection` | `packet`, `explanation`, `usage`; `template_explanation` |
@@ -81,7 +91,8 @@ Every function that already existed is now a named tool with a description and a
 | `recall_user_history` | `intake.build_state` (+ `plans.candidate_changes`) |
 | `project_balance`, `amount_safe_today`, `earliest_full_payment_date`, `check_plan_safety` | `forecast.projection / amount_safe_today / earliest_full_payment_date / is_safe` |
 | `list_payment_options` | `Dataset.options` + the profile's method and month limits |
-| `enumerate_candidate_plans`, `rank_and_choose` | `plans.enumerate_plans` + the six-rule `Plan.rank_key` (with an `exclude` list for re-planning) |
+| `score_gate` | the projection's headroom + the card's preferences/options/change candidates; builds the trivial plan via `plans.choose` |
+| `enumerate_candidate_plans`, `rank_and_choose` | `plans.enumerate_plans_for` (profile row + option rows from the card) + `plans.choose` (six-rule ranking, with an `exclude` list for re-planning) |
 | `spending_score`, `expense_impact` | `score.spending_score / expense_impact` |
 | `account_factors` | `factors.account_factors` (cached once per run) |
 | `counterfactual_without_messages` | `build_state(cfg={"use_messages": False})` + `plans.decide` |
@@ -101,5 +112,7 @@ python3 code/main.py                                   # agentic runtime, rule p
 python3 code/main.py --explain request_12 --samples    # goal, plan, findings, reflection, ledger, packet, row
 python3 code/main.py --planner llm --llm-reflect --limit 5   # model-proposed plans + model critique (advisory)
 python3 code/main.py --pipeline                        # legacy linear pipeline (parity oracle)
+python3 code/main.py --build-cards --no-dataset        # rebuild the account cards, then drop the dataset and serve from cards only
+python3 code/main.py --no-cards                        # recall from the dataset instead of cards (same output)
 python3 -m pytest -q tests/test_agent.py
 ```

@@ -35,14 +35,16 @@ PREREQS = {
     "list_commitments": ["recall_user_history"], "list_reserved_flows": ["recall_user_history"], "list_evidence": ["recall_user_history"],
     "project_balance": ["recall_user_history"], "amount_safe_today": ["recall_user_history"], "earliest_full_payment_date": ["recall_user_history"],
     "list_payment_options": ["recall_user_history"], "candidate_spending_changes": ["recall_user_history"],
-    "enumerate_candidate_plans": ["amount_safe_today", "earliest_full_payment_date"], "rank_and_choose": ["enumerate_candidate_plans"],
+    "score_gate": ["amount_safe_today", "earliest_full_payment_date", "list_payment_options", "candidate_spending_changes"],
+    "enumerate_candidate_plans": ["score_gate"], "rank_and_choose": ["enumerate_candidate_plans"],
     "spending_score": ["recall_user_history"], "expense_impact": ["rank_and_choose"], "account_factors": [],
     "check_plan_safety": ["rank_and_choose"], "counterfactual_without_messages": ["rank_and_choose"],
     "build_decision_packet": ["rank_and_choose", "spending_score", "expense_impact"], "write_explanation": ["build_decision_packet"],
     "audit_output_row": ["write_explanation"],
 }
-MANDATORY = ["recall_user_history", "amount_safe_today", "earliest_full_payment_date", "enumerate_candidate_plans",
+MANDATORY = ["recall_user_history", "amount_safe_today", "earliest_full_payment_date", "score_gate", "enumerate_candidate_plans",
              "rank_and_choose", "spending_score", "expense_impact", "check_plan_safety"]
+GATED = {"enumerate_candidate_plans", "rank_and_choose"}     # skipped when the score gate settled the request
 DELIVER = ["build_decision_packet", "write_explanation", "audit_output_row"]
 
 
@@ -113,9 +115,12 @@ class AgentResult:
     reflections: list[Reflection]
     transcript: list[dict]
     planner: str
+    recall_source: str | None = None
+    gate: dict | None = None
 
     def summary(self) -> dict:
         return dict(request_id=self.goal.request.request_id, goal=self.goal.describe(), planner=self.planner,
+                    recall_source=self.recall_source, gate=self.gate,
                     plan=[dict(id=s.id, worker=s.worker, tool=s.tool, args=s.args, why=s.why, phase=s.phase) for s in self.plan],
                     findings=[dict(step=r.step.id, worker=r.step.worker, findings=r.findings, flags=r.flags) for r in self.reports],
                     reflections=[r.as_dict() for r in self.reflections], ledger=self.transcript,
@@ -146,8 +151,9 @@ class RulePlanner:
             steps.append(Step("p1", "planner", "list_payment_options", why="record why every supplied option is rejected (full payment only)", optional=True))
         steps.append(Step("p2", "planner", "candidate_spending_changes", why="what the user permits changing if the plain plans are unsafe", optional=True))
         steps += [
-            Step("p3", "planner", "enumerate_candidate_plans", why="every rule-allowed plan, keeping the safe ones"),
-            Step("p4", "planner", "rank_and_choose", why="six-rule ranking; the best safe plan sets status and method"),
+            Step("g1", "planner", "score_gate", why="settle the request from the card's headroom when a threshold makes it exact"),
+            Step("p3", "planner", "enumerate_candidate_plans", why="every rule-allowed plan, keeping the safe ones (skipped when gated)"),
+            Step("p4", "planner", "rank_and_choose", why="six-rule ranking; the best safe plan sets status and method (skipped when gated)"),
             Step("s1", "scorer", "spending_score", why="account health before the request"),
             Step("s2", "scorer", "expense_impact", why="how much the chosen plan moves the score and headroom"),
             Step("s3", "scorer", "account_factors", why="cross-user two-factor profile for confidence", optional=True),
@@ -169,6 +175,7 @@ class LLMPlanner:
     SYSTEM = ("You are the orchestrator of a personal-finance affordability agent. You are given a goal and a catalogue of tools "
               "(each owned by a worker). Output ONLY a JSON array of steps in execution order, each {\"tool\": name, \"args\": {}, \"why\": short}. "
               "Rules: recall_user_history first; amount_safe_today and earliest_full_payment_date before enumerate_candidate_plans; "
+              "score_gate after list_payment_options and candidate_spending_changes and before enumerate_candidate_plans; "
               "rank_and_choose before spending_score/expense_impact/check_plan_safety; do not include build_decision_packet, "
               "write_explanation or audit_output_row (the orchestrator appends them). Skip tools that cannot matter for this goal "
               "(e.g. list_payment_options when the user accepts full payment only and partial is not allowed). 6 to 12 steps.")
@@ -290,8 +297,10 @@ class Orchestrator:
             row = mem.get("row") or render_row(dec, mem.get("explanation") or "")
             usage = dict(mem.get("usage") or {})
             root.set(final_status=dec.status, method=dec.method, confidence=reflections[-1].confidence,
-                     iterations=len(reflections), tool_calls=len(mem.ledger))
-        return AgentResult(dec, row, mem.get("packet") or {}, usage, goal, plan, reports, reflections, mem.transcript(), self.planner.name)
+                     iterations=len(reflections), tool_calls=len(mem.ledger), recall_source=mem.get("recall_source"),
+                     gate=(mem.get("gate") or {}).get("route"))
+        return AgentResult(dec, row, mem.get("packet") or {}, usage, goal, plan, reports, reflections, mem.transcript(), self.planner.name,
+                           mem.get("recall_source"), mem.get("gate"))
 
     # ---- execute -----------------------------------------------------------------------
     def execute(self, steps: list[Step], mem: UserMemory, iteration: int) -> list[WorkerReport]:
@@ -305,6 +314,10 @@ class Orchestrator:
                 args = dict(payments=[(str(d), a) for d, a in dec.plan.payments],
                             changes=[c.render(lambda x: f"{x:.2f}") for c in dec.plan.changes])
             step = Step(s.id, s.worker, s.tool, args, s.why, s.phase, s.optional)
+            gate = mem.get("gate")
+            if s.tool in GATED and gate and gate.get("route") != "search":
+                mem.record(s.worker, s.tool, {}, f"skipped: settled by score gate ({gate['route']})", 0.0)
+                continue
             if s.tool == "write_explanation":
                 with self.tracer.span("explain", worker=s.worker) as sp:
                     rep = WORKERS[s.worker].run(mem, step)
