@@ -61,6 +61,10 @@ def profile_features(state: FinancialState) -> dict:
                         "forecast_amount": round(r.amount, 2), "cv": _cv(hist), "last_amounts": hist[-4:]})
     ev = state.events
     inc = ev[(ev.event_type == "income") & (ev.direction == "credit")] if not ev.empty else ev
+    # the variable pool is one stream called "variable income": keep the settled descriptions so gig platforms,
+    # invoices and household streams stay recognisable
+    seen = inc[inc.status == "settled"].description.value_counts().head(5) if not inc.empty else []
+    descriptions = [{"description": d, "count": int(n)} for d, n in seen.items()] if len(seen) else []
     one_off, pending = [], []
     if not inc.empty:
         for row in inc.sort_values(["sdate", "event_id"]).itertuples():
@@ -77,7 +81,7 @@ def profile_features(state: FinancialState) -> dict:
     total = sum(s["forecast_amount"] * (30.0 / (s["cadence_days"] or 30)) for s in streams)
     largest = max((s["forecast_amount"] * (30.0 / (s["cadence_days"] or 30)) for s in streams), default=0.0)
     return {"user_id": state.user_id, "request_date": str(state.request_date), "currency": state.currency,
-            "income_streams": streams, "one_off_credits": one_off[-4:], "pending_or_scheduled_credits": pending[-3:],
+            "income_streams": streams, "income_descriptions": descriptions, "one_off_credits": one_off[-4:], "pending_or_scheduled_credits": pending[-3:],
             "message_facts": facts[-4:], "income_notes": [n for n in state.notes if "income" in n or "salary" in n or "payroll" in n][-3:],
             "variable_pool": state.irregular_income, "primary_income_share": round(largest / total, 2) if total else 0.0,
             "failed_or_cancelled_debits": int(len(debits))}
@@ -85,9 +89,12 @@ def profile_features(state: FinancialState) -> dict:
 
 def deterministic_archetype(f: dict) -> str:
     streams = f["income_streams"]
-    descs = " ".join(s["description"].lower() for s in streams)
+    current = " ".join(s["description"].lower() for s in streams)
+    descs = current + " " + " ".join(d["description"].lower() for d in f.get("income_descriptions", []))
     notes = " ".join(f["income_notes"]).lower()
-    if any(m in notes or m in descs for m in TRANSITION_MARKERS):
+    # a job change is a transition only while it is current (in the notes or the forecast stream itself);
+    # a settled "previous employer" row behind a stable new payroll is history, not a transition
+    if any(m in notes or m in current for m in TRANSITION_MARKERS):
         return "transition"          # income is changing hands or has just stopped: not the same as never having any
     if not streams:
         return "no_income" if not f["pending_or_scheduled_credits"] and not f["one_off_credits"] else "transition"

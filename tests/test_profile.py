@@ -20,6 +20,9 @@ def test_archetype_rules():
     assert deterministic_archetype(_f()) == "no_income"
     assert deterministic_archetype(_f(streams=[_s("Payroll credit")])) == "salaried"
     assert deterministic_archetype(_f(streams=[_s("Delivery platform payout")], pool=True)) == "gig"
+    pooled = _f(streams=[_s("variable income")], pool=True)
+    pooled["income_descriptions"] = [{"description": "Driver platform payout", "count": 9}]
+    assert deterministic_archetype(pooled) == "gig"          # pooled streams keep their settled descriptions
     assert deterministic_archetype(_f(streams=[_s("Consulting invoice payment")], pool=True)) == "freelance"
     assert deterministic_archetype(_f(streams=[_s("Primary household salary"), _s("Second household income", "event_2")])) == "mixed_household"
     assert deterministic_archetype(_f(streams=[_s("Payroll credit"), _s("Website project payment", "event_2")])) == "salaried_plus_side"
