@@ -53,10 +53,15 @@ class Dataset:
     @classmethod
     def load(cls, root: Path = DATASET) -> "Dataset":
         rd = lambda n: pd.read_csv(root / n, dtype=str, keep_default_na=False)
-        ds = cls(profiles=rd("financial_profiles.csv"), events=rd("financial_events.csv"),
-                 requests=rd("requests.csv"), samples=rd("sample_requests.csv"),
-                 options=rd("request_payment_options.csv"), rates=rd("exchange_rates.csv"),
-                 messages=rd("messages.csv"), images=rd("images.csv"))
+        return cls.from_frames(profiles=rd("financial_profiles.csv"), events=rd("financial_events.csv"),
+                               requests=rd("requests.csv"), samples=rd("sample_requests.csv"),
+                               options=rd("request_payment_options.csv"), rates=rd("exchange_rates.csv"),
+                               messages=rd("messages.csv"), images=rd("images.csv"))
+
+    @classmethod
+    def from_frames(cls, **frames: pd.DataFrame) -> "Dataset":
+        """Same typing as `load`, over frames read any way (full files or per-user slices from disk)."""
+        ds = cls(**frames)
         for col in ("current_available_balance", "minimum_balance_to_keep"):
             ds.profiles[col] = ds.profiles[col].astype(float)
         ds.profiles = ds.profiles.set_index("user_id", drop=False)

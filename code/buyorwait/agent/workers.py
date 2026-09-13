@@ -13,6 +13,7 @@ orchestrator's reflection reads. Workers never talk to each other; they share me
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .memory import UserMemory
@@ -82,6 +83,18 @@ class Historian(Worker):
             if r["uncertainty_flags"]:
                 rep.flags.append("evidence_uncertainty")
                 rep.findings.extend(r["uncertainty_flags"][:3])
+            if r.get("image_backed"):
+                rep.flags.append("image_evidence")
+            # pull the raw rows behind uncertainty flags and image-filled amounts from disk, on demand, so the
+            # evidence (e.g. the blank amount the image supplied) is in the transcript
+            ids = sorted({m for n in r["uncertainty_flags"] + r.get("image_backed", []) for m in re.findall(r"event_\d+", n)})
+            if ids:
+                if True:
+                    raw = registry.call("fetch_events", mem, worker=self.name, event_ids=ids[:5])
+                    if "error" not in raw:
+                        for row in raw["rows"][:3]:
+                            rep.findings.append(f"raw {row['event_id']}: {row['event_date']} {row['event_type']}/{row['category']} "
+                                                f"{row['direction']} {row['amount'] or '<blank>'} {row['currency']} [{row['status']}] {row['description'][:60]}")
             if r["facts"]:
                 rep.flags.append("message_facts_applied")
 

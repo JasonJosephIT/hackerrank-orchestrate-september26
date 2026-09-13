@@ -155,3 +155,13 @@ With plan payments ordered last on their day, re-testing `INTRADAY_CHECK=True` (
 **Why.** The card is the memory the user asked for: small, deterministic, built once, and the thing a new settled event would update. The gate is the threshold the user asked for, restricted to the cases where a threshold is provably the same answer as the search, so the contract columns stay byte-identical (parity tests on 25 samples and 250 requests).
 
 **Rejected.** Deciding the middle statuses from a fitted score threshold (25 labels, and the answer depends on per-request options); storing cards in the repo (derived data; the cache rebuilds in 6 s); keeping raw events on the card (the streams already carry their history lists).
+
+## D15 — Cards in RAM, tables on disk by section (user direction, 2026-09-13)
+
+**Direction from Jason.** House the cards in RAM and retrieve certain sections of the tables from disk when needed; confirm decisions are made off the cards.
+
+**Decision.** `code/buyorwait/agent/store.py` (`DiskTables`): each CSV is indexed once by its key column as byte ranges (all seven keyed files are contiguous per `user_id` / `request_id` and have no embedded newlines; index cached in `.cache/index/`, invalidated on size/mtime change). `slice(table, key)` reads one user's or one request's rows by seeking; `dataset_for(user, request)` assembles a one-user `Dataset` (rates read whole, ~130 rows) via the new `Dataset.from_frames`, which is all `build_card` needs. `LongTermMemory` now carries `cards` (RAM) and `disk`; `UserMemory.card` builds a missing card from disk sections and adds it to the store; the historian's `fetch_events` tool reads raw rows on demand (used when the evidence carries an uncertainty flag or an image-filled amount). `main.py` no longer loads the dataset when the card cache covers the run (`--load-dataset` restores the old behaviour); it reports section reads and peak RSS.
+
+**Measured.** Card from disk slices == card from the full dataset on 65 users (0 mismatches, 81 ms per build). Warm full run: 0 KB of tables loaded, 190 KB read in 17 section reads, peak RSS 115 MB, 250 rows identical to the linear pipeline. All 25 samples served on card misses from disk: 344 KB read, rows identical. Decisions are made off the cards: nothing on the decision path reads a table (D14 parity holds).
+
+**Rejected.** A database (SQLite/DuckDB) for the tables: the byte-range index gives per-user reads in one seek with no dependency, and the dataset is fixed for the challenge. Memory-mapping the frames: pandas would still parse whole files. Dropping the on-demand path entirely: a miss must be servable without the whole table, otherwise "cards in RAM" is only true for pre-built users.

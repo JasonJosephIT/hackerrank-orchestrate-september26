@@ -25,7 +25,8 @@ python3 code/evaluation/build_usage_report.py     # evaluation/usage_report.md f
 python3 code/main.py --explain request_42         # agent transcript (goal, plan, findings, reflection) + decision packet for one request
 python3 code/main.py --planner llm --llm-reflect  # opt-in: Groq proposes the tool plan and critiques the decision (advisory only)
 python3 code/main.py --pipeline                   # legacy linear pipeline (same contract columns; parity oracle in tests)
-python3 code/main.py --build-cards --no-dataset   # rebuild .cache/cards.jsonl, drop the dataset, serve every request from cards only
+python3 code/main.py --build-cards                # rebuild .cache/cards.jsonl (loads the dataset once, then drops it)
+python3 code/main.py --load-dataset               # keep the full tables in RAM at request time (default: cards in RAM, tables on disk by section)
 python3 -m pytest -q tests                        # unit + regression tests
 python3 code/package.py                           # build code.zip for submission (no dataset, secrets or caches)
 ```
@@ -36,10 +37,11 @@ python3 code/package.py                           # build code.zip for submissio
 
 ```
 agent/cards.py        account cards: one compact card per user (state, prefs, options, scores) built once; ~2.8 MB vs 21 MB raw
-agent/memory.py       long-term (cards) · episodic (this user's card recalled for the request) · working (per request scratchpad + ledger)
+agent/store.py        disk tables: byte-range index per user/request; one section read on a card miss or a raw-row fetch
+agent/memory.py       long-term (cards in RAM, tables on disk) · episodic (this user's card) · working (per request scratchpad + ledger)
 agent/orchestrator.py Goal -> plan (rules | llm) -> execute workers -> reflect (7 goal checks, concerns, confidence) -> re-plan -> deliver
 agent/workers.py      historian · forecaster · planner (incl. score gate) · scorer · auditor · explainer (findings + flags)
-agent/tools.py        19 schema-described tools, each wrapping one of the engine functions below
+agent/tools.py        20 schema-described tools, each wrapping one of the engine functions below
 
 dataset/*.csv ──► intake.py    join, dated FX, status rules, recurrence + income streams, evidence facts
                   evidence.py  messages: 30 regex templates (EN + Indonesian) -> typed facts; images: cached amounts

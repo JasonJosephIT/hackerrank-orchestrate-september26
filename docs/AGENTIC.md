@@ -1,4 +1,4 @@
-# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13), account cards and score gate (D14)
+# AGENTIC.md — memory, orchestration, workers, tools, reflection (D13), account cards and score gate (D14), tables on disk (D15)
 
 How a request is served in the default runtime (`python3 code/main.py`). The legacy linear pipeline is still available with `--pipeline` and produces identical contract columns; the agentic runtime adds planning, worker reports, a reflection against the goal, and a transcript per request.
 
@@ -6,15 +6,18 @@ How a request is served in the default runtime (`python3 code/main.py`). The leg
 
 **Question asked:** are we loading all history at once, or going request by request and searching the user's history?
 
-**Answer: neither, since D14. The raw history is read once to build one compact card per user; request time recalls the card.**
+**Answer: neither, since D14/D15. The cards live in RAM; the raw tables stay on disk and are read by section only when a card is missing or a worker asks for raw rows.**
 
 | Tier | What | When | Where |
 |---|---|---|---|
-| Long-term | **Account cards** (`CardStore`): one card per user as of the request date, built once by the deterministic intake + score layers: profile preferences, the reconstructed state (balance, minimum, ~10 recurring streams, reserved pending/scheduled flows, notes, facts), the same state without message facts (when facts applied), the request's supplied payment options, the Spending Score components, the user's two-factor row. Cached in `.cache/cards.jsonl`, rebuilt with `--build-cards`. The raw `dataset/*.csv` tables (~21 MB in pandas) are only needed to build cards; `--no-dataset` drops them after the build and the run still serves every request. | once per run (6 s for 275 users) | `agent/cards.py`, `agent/memory.py: LongTermMemory` |
+| Long-term (RAM) | **Account cards** (`CardStore`): one card per user as of the request date, built once by the deterministic intake + score layers: profile preferences, the reconstructed state (balance, minimum, ~10 recurring streams, reserved pending/scheduled flows, notes, facts), the same state without message facts (when facts applied), the request's supplied payment options, the Spending Score components, the user's two-factor row. Cached in `.cache/cards.jsonl`, rebuilt with `--build-cards`. | once per run (13 s cold for 275 users incl. factors; loaded from cache otherwise) | `agent/cards.py`, `agent/memory.py: LongTermMemory` |
+| Long-term (disk) | **Disk tables** (`DiskTables`): the raw `dataset/*.csv` files are never loaded whole at request time. Each file is indexed once by its key column as byte ranges (every file is contiguous per `user_id` / `request_id`, no embedded newlines; index cached in `.cache/index/`). `slice(table, key)` seeks and reads one user's or one request's rows; `dataset_for(user, request)` assembles a one-user `Dataset` from slices, enough to build that user's card on a miss. `--load-dataset` keeps the full tables in RAM instead. | on demand | `agent/store.py` |
 | Episodic | **Recall** of the user's card for this request (`UserMemory.recall()` → `AccountCard.to_state()`). Without cards (`--no-cards`), the same recall runs `intake.build_state` over the dataset: only that user's rows, settled history cut at `request_date`, pending/scheduled reserved, messages sent on or before the request date or tied to the request. A card round-trips through JSON exactly, so both paths give byte-identical decisions (asserted in tests). | first step of every request | `UserMemory.recall()` |
 | Working | The scratchpad for this request: recalled state, projection, safe amount, earliest date, gate verdict, candidate plans, decision, scores, audit result, counterfactual, reflection, packet, explanation | during the request, discarded after | `UserMemory.working` |
 
-Measured: raw tables 20.9 MB in RAM; all 275 cards 2.8 MB on disk (the samples' 25 cards 247 KB), average 9.8 streams per user. Nothing carries over between requests: users and requests are one-to-one in this dataset, and a stateless recall is the safer default anyway (a later request must not see a later message). In a live product the card is what a new settled event would update.
+Measured: raw tables 20.9 MB in pandas if loaded whole; all 275 cards 2.8 MB (the samples' 25 cards 247 KB), average 9.8 streams per user. A warm full run reads 190 KB from disk in 17 section reads (the historian's raw-row fetches behind image-filled amounts), peak RSS 115 MB; serving the 25 samples entirely on card misses from disk reads 344 KB in 182 section reads and gives the same rows. A card built from disk slices is identical to one built from the full dataset (asserted).
+
+When do the tables get touched at request time? Two cases only: a **card miss** (no card for `user@request_date`: the historian's recall builds it from the user's sections and adds it to the store, so the next request for that user is a hit), and the historian's **`fetch_events`** tool (reads the raw rows behind an uncertainty flag or an image-filled amount so the transcript shows the evidence, e.g. `raw event_3051: 2026-01-06 expense/groceries debit <blank> INR [settled] Grocery tax invoice` next to the card's filled amount). The decision itself never needs the tables. Nothing carries over between requests: users and requests are one-to-one in this dataset, and a stateless recall is the safer default anyway (a later request must not see a later message). In a live product the card is what a new settled event would update.
 
 Every tool call is appended to a **ledger** on the user's memory; the ledger becomes the transcript (`.cache/agent_transcripts.jsonl` on a full run, printed by `--explain`).
 
@@ -73,7 +76,7 @@ Concerns are added from worker flags: the decision depends on message evidence (
 
 | Worker | Tools | Reads | Writes / flags |
 |---|---|---|---|
-| historian | `recall_user_history`, `list_commitments`, `list_reserved_flows`, `list_evidence` | dataset, profile | `state`, `change_candidates`; `no_income_forecast`, `structural_deficit`, `evidence_uncertainty`, `message_facts_applied` |
+| historian | `recall_user_history`, `list_commitments`, `list_reserved_flows`, `list_evidence`, `fetch_events` (on demand, disk) | card (disk sections on a miss or a raw fetch) | `state`, `change_candidates`; `no_income_forecast`, `structural_deficit`, `evidence_uncertainty`, `message_facts_applied` |
 | forecaster | `project_balance`, `amount_safe_today`, `earliest_full_payment_date` | `state` | `projection`, `safe_today`, `earliest`; `baseline_breach`, `nothing_safe_today`, `no_full_payment_date` |
 | planner | `list_payment_options`, `candidate_spending_changes`, `score_gate`, `enumerate_candidate_plans`, `rank_and_choose` | `state`, `safe_today`, `earliest`, options | `options`, `candidates`, `decision`; `no_eligible_option`, `no_safe_plan`, `not_affordable`, `misses_deadline`, `needs_spending_changes` |
 | scorer | `spending_score`, `expense_impact`, `account_factors` | `state`, `decision` | `score`, `impact`, `factors`; `impact_caution`, `impact_unsafe`, `fragile_account` |
@@ -88,7 +91,8 @@ Every function that already existed is now a named tool with a description and a
 
 | Tool | Wraps |
 |---|---|
-| `recall_user_history` | `intake.build_state` (+ `plans.candidate_changes`) |
+| `recall_user_history` | `AccountCard.to_state` (card hit), else `cards.build_card` over `DiskTables.dataset_for` slices (+ `plans.candidate_changes`) |
+| `fetch_events` | `DiskTables.events` (one user's byte range of `financial_events.csv`) |
 | `project_balance`, `amount_safe_today`, `earliest_full_payment_date`, `check_plan_safety` | `forecast.projection / amount_safe_today / earliest_full_payment_date / is_safe` |
 | `list_payment_options` | `Dataset.options` + the profile's method and month limits |
 | `score_gate` | the projection's headroom + the card's preferences/options/change candidates; builds the trivial plan via `plans.choose` |
@@ -112,7 +116,8 @@ python3 code/main.py                                   # agentic runtime, rule p
 python3 code/main.py --explain request_12 --samples    # goal, plan, findings, reflection, ledger, packet, row
 python3 code/main.py --planner llm --llm-reflect --limit 5   # model-proposed plans + model critique (advisory)
 python3 code/main.py --pipeline                        # legacy linear pipeline (parity oracle)
-python3 code/main.py --build-cards --no-dataset        # rebuild the account cards, then drop the dataset and serve from cards only
+python3 code/main.py --build-cards                     # rebuild the account cards (loads the dataset once, then drops it)
+python3 code/main.py --load-dataset                    # keep the full tables in RAM at request time (default: cards in RAM, tables on disk)
 python3 code/main.py --no-cards                        # recall from the dataset instead of cards (same output)
 python3 -m pytest -q tests/test_agent.py
 ```

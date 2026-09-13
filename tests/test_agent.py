@@ -144,3 +144,40 @@ def test_score_gate_is_exact_against_full_plan_search(lt):
             assert res.gate["route"] == full.status
             assert any(e["summary"].startswith("skipped") for e in res.transcript)
     assert gated > 0
+
+
+# ---- D15: cards in RAM, tables on disk by section --------------------------------------------
+def test_disk_slices_match_full_dataset_and_serve_card_misses(lt, tmp_path):
+    from buyorwait.agent.cards import CardStore, build_card
+    from buyorwait.agent.store import DiskTables
+    from dataclasses import asdict
+    disk = DiskTables(ROOT / "dataset", index_dir=tmp_path / "index")
+    rows = list(lt.ds.samples.itertuples(index=False))
+    for row in rows[:8]:
+        req = request_from_row(row)
+        ev = disk.slice("events", req.user_id)
+        assert list(ev.event_id) == list(lt.ds.events[lt.ds.events.user_id == req.user_id].event_id)
+        assert asdict(build_card(disk.dataset_for(req.user_id, req.request_id), req, lt.image_facts)) == \
+            asdict(build_card(lt.ds, req, lt.image_facts))
+    # no dataset, empty card store: every request is a miss, built from disk sections, same rows as the dataset path
+    miss_lt = LongTermMemory(None, lt.image_facts, verify_context=lt.verify_context, cards=CardStore(), disk=disk)
+    orch_miss, orch_ds = Orchestrator(miss_lt, use_llm=False), Orchestrator(lt, use_llm=False)
+    for row in rows:
+        a, b = orch_miss.handle_row(row), orch_ds.handle_row(row)
+        assert a.row == b.row, row.request_id
+        assert a.recall_source.startswith("card (built from disk)")
+    assert len(miss_lt.cards) == len(rows)
+    st = disk.stats()
+    assert st["reads"] > 0 and st["bytes"] < 2_000_000            # sections, not the 20 MB of tables
+
+
+def test_fetch_events_reads_one_user_section_from_disk(lt, tmp_path):
+    from buyorwait.agent.cards import CardStore
+    from buyorwait.agent.store import DiskTables
+    disk = DiskTables(ROOT / "dataset", index_dir=tmp_path / "index")
+    row = next(r for r in lt.ds.samples.itertuples(index=False))
+    req = request_from_row(row)
+    mem = UserMemory(LongTermMemory(None, lt.image_facts, cards=CardStore(), disk=disk), req)
+    out = registry.call("fetch_events", mem, event_ids=None)
+    assert out["source"] == "disk" and out["count"] == int((lt.ds.events.user_id == req.user_id).sum())
+    assert mem.ledger[-1].tool == "fetch_events"

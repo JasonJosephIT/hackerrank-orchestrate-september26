@@ -172,9 +172,28 @@ def list_evidence(mem: UserMemory) -> dict:
     st = mem.require("state")
     facts = [dict(kind=f.kind, message_id=f.message_id, amount=f.amount, currency=f.currency, on=str(f.on) if f.on else None,
                   source=f.source) for f in st.facts]
-    uncertain = [n for n in st.notes if "ignored" in n or "keeping" in n or "not forecast" in n or "not projected" in n]
-    return dict(facts=facts, notes=st.notes, uncertainty_flags=uncertain,
-                summary=f"{len(facts)} fact(s), {len(st.notes)} note(s), {len(uncertain)} uncertainty flag(s)")
+    uncertain = [n for n in st.notes if any(k in n for k in ("ignored", "keeping", "not forecast", "no salary forecast", "not projected", "pending"))]
+    image_backed = [n for n in st.notes if "from image" in n]
+    return dict(facts=facts, notes=st.notes, uncertainty_flags=uncertain, image_backed=image_backed,
+                summary=f"{len(facts)} fact(s), {len(st.notes)} note(s), {len(uncertain)} uncertainty flag(s), {len(image_backed)} image-filled amount(s)")
+
+
+@registry.register("fetch_events", """
+    Read raw event rows for this user from the tables on disk (one user's section, not the whole file),
+    optionally only the given event ids. Used on demand: the historian pulls the rows behind an
+    uncertainty flag (a blank amount, a figure kept at the safer level) so the transcript shows the
+    evidence, and the LLM planner may request it. Never needed for the decision itself.""",
+    {"type": "object", "properties": {"event_ids": {"type": "array", "items": {"type": "string"}}}, "required": []},
+    owner="historian")
+def fetch_events(mem: UserMemory, event_ids: list | None = None) -> dict:
+    ev = mem.raw_events(event_ids or None)
+    cols = [c for c in ("event_id", "event_date", "settlement_date", "event_type", "category", "direction", "amount", "currency",
+                        "status", "flexibility", "description") if c in ev.columns]
+    rows = ev[cols].head(20).to_dict("records")
+    lt = mem.long_term
+    src = "disk" if (lt.disk is not None and lt.ds is None) else "dataset"
+    return dict(source=src, rows=rows, count=int(len(ev)),
+                summary=f"[{src}] {len(ev)} raw event row(s)" + (f" for {', '.join(event_ids[:3])}" if event_ids else ""))
 
 
 # ------------------------------------------------------------------------------------------

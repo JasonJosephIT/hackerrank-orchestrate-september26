@@ -28,6 +28,7 @@ from buyorwait import telemetry  # noqa: E402
 from buyorwait.agent.cards import CardStore  # noqa: E402
 from buyorwait.agent.memory import LongTermMemory  # noqa: E402
 from buyorwait.agent.orchestrator import Orchestrator  # noqa: E402
+from buyorwait.agent.store import DiskTables  # noqa: E402
 from buyorwait.evidence import image_amounts  # noqa: E402
 from buyorwait.explain import decision_packet, llm_explanation, template_explanation  # noqa: E402
 from buyorwait.forecast import projection  # noqa: E402
@@ -81,8 +82,19 @@ def run_one_pipeline(ds, facts, row, use_llm: bool, tracer, client=None):
     return dec, render_row(dec, explanation), packet, usage
 
 
-def _cards(ds, facts, rows_in, mode: str, rebuild: bool) -> CardStore:
-    """Account cards (D14): load the cached store when it covers every request, else build and save it."""
+def _rows(disk: DiskTables, samples: bool):
+    """The request rows for this run, read once from disk (250 or 25 small rows)."""
+    import pandas as pd
+    table = "samples" if samples else "requests"
+    idx = disk.index(table)
+    df = pd.read_csv(DATASET / idx["file"], dtype=str, keep_default_na=False)
+    df["requested_amount"] = df["requested_amount"].astype(float)
+    return df
+
+
+def _cards(ds, facts, rows_in, mode: str, rebuild: bool):
+    """Account cards (D14): load the cached store when it covers every request, else load the dataset once,
+    build and save it. Returns (store, dataset-or-None)."""
     path = ROOT / ".cache" / ("cards.jsonl" if mode in ("full", "partial") else f"cards_{mode}.jsonl")
     if mode == "explain":
         path = ROOT / ".cache" / "cards.jsonl"
@@ -91,17 +103,18 @@ def _cards(ds, facts, rows_in, mode: str, rebuild: bool) -> CardStore:
         try:
             store = CardStore.load(path)
             if need <= set(store.by_request):
-                print(f"cards: loaded {len(store)} from {path.relative_to(ROOT)}", file=sys.stderr)
-                return store
+                print(f"cards: loaded {len(store)} from {path.relative_to(ROOT)} ({path.stat().st_size / 1e3:.0f} KB)", file=sys.stderr)
+                return store, ds
         except Exception as e:
             print(f"cards: cache unusable ({e}); rebuilding", file=sys.stderr)
+    ds = ds or Dataset.load(DATASET)
     rows = list(ds.requests.itertuples(index=False)) + list(ds.samples.itertuples(index=False)) if mode != "samples" else list(rows_in.itertuples(index=False))
     store = CardStore.build(ds, facts, rows)
     size = store.save(path)
     st = store.stats()
     print(f"cards: built {st['cards']} in {st['built_in_s']}s ({size / 1e3:.0f} KB, avg {st['avg_streams']} streams/user) -> {path.relative_to(ROOT)}",
           file=sys.stderr)
-    return store
+    return store, ds
 
 
 def run_one(orch: Orchestrator, row):
@@ -121,17 +134,19 @@ def main() -> int:
     ap.add_argument("--llm-reflect", action="store_true", help="add a model critique to the orchestrator's reflection (advisory only)")
     ap.add_argument("--build-cards", action="store_true", help="rebuild the account cards (.cache/cards*.jsonl) even if present")
     ap.add_argument("--no-cards", action="store_true", help="serve requests from the dataset instead of account cards")
-    ap.add_argument("--no-dataset", action="store_true", help="drop the dataset after building the cards (proves request time is card-only)")
+    ap.add_argument("--load-dataset", action="store_true", help="keep the full dataset in RAM at request time (default: cards in RAM, tables on disk)")
     args = ap.parse_args()
     _load_env()
 
-    ds = Dataset.load(DATASET)
     facts = image_amounts()
-    rows_in = ds.samples if args.samples else ds.requests
+    disk = DiskTables(DATASET)
+    ds = None                                    # loaded only when something needs the whole table
+    rows_in = _rows(disk, args.samples)
     if args.explain:
         rows_in = rows_in[rows_in.request_id == args.explain]
         if rows_in.empty:
-            rows_in = ds.samples[ds.samples.request_id == args.explain]
+            rows_in = _rows(disk, True)
+            rows_in = rows_in[rows_in.request_id == args.explain]
     if args.limit:
         rows_in = rows_in.head(args.limit)
     use_llm = not args.no_llm and bool(os.environ.get("GROQ_API_KEY"))
@@ -149,12 +164,16 @@ def main() -> int:
 
     requests_file = "sample_requests.csv" if args.samples else "requests.csv"
     orch = None
+    if args.pipeline or args.no_cards or args.load_dataset:
+        ds = Dataset.load(DATASET)
     if not args.pipeline:
         cards = None
         if not args.no_cards:
-            cards = _cards(ds, facts, rows_in, mode, rebuild=args.build_cards)
-        lt = LongTermMemory(None if (args.no_dataset and cards is not None) else ds, facts,
-                            verify_context=load_context(DATASET, requests_file), cards=cards)
+            cards, ds = _cards(ds, facts, rows_in, mode, rebuild=args.build_cards)
+            if not args.load_dataset:
+                ds = None                        # request time: cards in RAM, tables on disk by section
+        lt = LongTermMemory(ds, facts, verify_context=load_context(DATASET, requests_file), cards=cards, disk=disk)
+        print(f"memory: {'cards in RAM, tables on disk' if ds is None else 'cards + full dataset in RAM'}", file=sys.stderr)
         orch = Orchestrator(lt, tracer=tracer, use_llm=use_llm, client=client, planner=args.planner,
                             llm_reflect=True if args.llm_reflect else None)
     transcripts = None
@@ -191,6 +210,11 @@ def main() -> int:
 
     if transcripts is not None:
         transcripts.close()
+    if orch is not None:
+        import resource
+        dstat = disk.stats()
+        print(f"disk reads at request time: {dstat['reads']} section read(s), {dstat['bytes'] / 1e3:.0f} KB; "
+              f"peak RSS {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB", file=sys.stderr)
     ctx = load_context(DATASET, requests_file)
     errs = verify_rows(out_rows, ctx)
     if errs:
